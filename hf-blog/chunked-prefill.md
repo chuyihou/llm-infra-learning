@@ -44,7 +44,9 @@ The real concern is not only average ITL, but its **variance and tail**. Users n
 
 *Chunked Prefill targets this non-preemptible window. It prevents the scheduler from having to choose between one entire prefill and all pending decode work at once.*
 
-**Background: TP is communication-bound; PP is bubble-bound ADDITIONAL READINGSupplementary background on multi-GPU deployment and pipeline bubbles**
+**Additional reading: Background: TP is communication-bound; PP is bubble-bound**
+
+Supplementary background on multi-GPU deployment and pipeline bubbles
 
 When a model does not fit on one GPU, Tensor Parallelism (TP) and Pipeline Parallelism (PP) distribute it across multiple GPUs. Their bottlenecks differ, which determines where Chunked Prefill can help.
 
@@ -248,7 +250,9 @@ There are therefore at least three granularities: media preprocessing, vision-en
 
 ***Tuning order:** decompose TTFT into media fetch/decode → preprocessing → vision encoder → queueing → LLM Prefill → first-token release. If visual-token volume is the problem, first adjust resolution, tiling, or frame sampling within quality constraints, then tune the LLM chunk size. Otherwise encoder latency can be mistaken for ineffective Chunked Prefill.*
 
-**Deep optimization: turn fixed-token chunks into near-constant-time microbatches for long contexts and PP ADDITIONAL READINGSGLang DynamicChunkSizer, latency model, and PP cadence**
+**Additional reading: Deep optimization: turn fixed-token chunks into near-constant-time microbatches for long contexts and PP**
+
+SGLang DynamicChunkSizer, latency model, and PP cadence
 
 The long-context problem is that **equal-size chunks become progressively slower later in the prompt**. Let cached history length be `H` and the next chunk contain `x` new tokens. Those queries attend over roughly `H+x` keys and values, so the dominant incremental attention work grows approximately as `x(H+x)`. With fixed `x`, per-iteration latency rises as `H` grows.
 
