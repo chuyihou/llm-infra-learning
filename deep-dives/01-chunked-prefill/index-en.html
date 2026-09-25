@@ -1,0 +1,1291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="A technical deep dive into Chunked Prefill for LLM infrastructure engineers: motivation, mechanics, trade-offs, scheduler design, SGLang, vLLM, and performance evidence.">
+  <title>Chunked Prefill: Turn long prompts into schedulable work</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --paper:#f5f3ed;--paper-2:#ece9e1;--white:#fffefa;--ink:#292d3a;--muted:#4f5d75;--soft:#7b8392;
+      --rule:#d4d0c7;--accent:#e26432;--accent-soft:#f9e8df;--link:#2e5aa8;--link-soft:#e7edf8;
+      --green:#3f775f;--green-soft:#e5f0ea;--red:#9b4d43;--red-soft:#f4e7e4;
+      --article:min(760px,calc(100vw - 40px));--wide:min(1120px,calc(100vw - 40px));
+      --motion-fast:160ms;--motion-step:480ms;--motion-hold:900ms;--motion-total:6300ms;--motion-ease:cubic-bezier(.2,.8,.2,1);
+    }
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:76px}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.82 Geist,system-ui,sans-serif;overflow-x:hidden}body:before{content:"";position:fixed;inset:0 0 auto;height:3px;background:var(--accent);transform:scaleX(var(--read-progress,0));transform-origin:left;z-index:60}::selection{background:#f3ba9e;color:var(--ink)}*{scrollbar-color:#9aa0aa var(--paper-2);scrollbar-width:thin}a{color:var(--link);text-decoration-thickness:1px;text-underline-offset:4px}a:hover{color:#193d7b}code,pre,.mono{font-family:"Geist Mono",ui-monospace,monospace}code{font-size:.86em;background:var(--paper-2);padding:.12em .34em;border-radius:3px}h1,h2,h3,h4,p{margin-top:0}h1,h2{font-family:"Instrument Serif",Georgia,serif;font-weight:400}h1{max-width:920px;margin-bottom:28px;font-size:clamp(4rem,9vw,6rem);line-height:.9;letter-spacing:-.035em}h1 em{color:var(--accent);font-weight:400}h2{margin-bottom:22px;font-size:clamp(2.7rem,6vw,4.7rem);line-height:.98;letter-spacing:-.03em;text-wrap:balance}h3{margin:72px 0 16px;font-size:clamp(1.55rem,3vw,2.2rem);line-height:1.2;letter-spacing:-.025em;text-wrap:balance}h4{margin:34px 0 10px;font-size:1.05rem}p{max-width:72ch;margin-bottom:1.35em}.lead{font-size:1.23rem;line-height:1.72;color:var(--muted)}strong{font-weight:650}sup a{text-decoration:none}.num{font-variant-numeric:tabular-nums}
+    :focus-visible{outline:3px solid rgba(46,90,168,.32);outline-offset:3px}.topbar{position:sticky;top:0;z-index:50;background:rgba(245,243,237,.96);border-bottom:1px solid var(--rule)}.topbar-inner{width:var(--wide);height:64px;margin:auto;display:flex;align-items:center;gap:28px}.brand{font:600 11px/1 Geist Mono,monospace;letter-spacing:.08em;white-space:nowrap}.brand span{color:var(--accent)}nav{display:flex;gap:3px;margin-left:auto;overflow:auto;scrollbar-width:none}nav::-webkit-scrollbar{display:none}nav a{flex:0 0 auto;padding:10px 9px;border-bottom:2px solid transparent;color:var(--muted);font-size:11px;text-decoration:none}nav a:hover,nav a.active{border-color:var(--accent);color:var(--ink)}
+    .hero{width:var(--wide);min-height:78vh;margin:auto;padding:112px 0 78px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:72px;align-items:end;border-bottom:1px solid var(--rule)}.hero-copy>p{max-width:700px;font-size:1.3rem;color:var(--muted)}.hero-aside{padding-top:16px;border-top:1px solid var(--ink)}.hero-aside p{margin:0 0 16px;color:var(--muted);font-size:13px}.hero-aside strong{display:block;color:var(--ink);margin-bottom:5px}.hero-thesis{width:var(--article);margin:0 auto;padding:30px 0 36px;border-bottom:1px solid var(--rule);font-family:"Instrument Serif",serif;font-size:clamp(1.8rem,4vw,2.7rem);font-style:italic;line-height:1.25;color:var(--ink)}
+    .section{padding:112px 0;border-bottom:1px solid var(--rule)}.section-head,.prose{width:var(--article);margin-left:auto;margin-right:auto}.section-head{margin-bottom:46px}.section-index{display:block;margin-bottom:16px;color:var(--accent);font:600 10px/1.3 Geist Mono,monospace;letter-spacing:.12em}.section-head .lead{margin-bottom:0}.prose>p:first-child:not(.lead){font-size:1.08rem}.wide{width:var(--wide);margin:48px 50% 52px;transform:translateX(-50%)}.measure{width:var(--article);margin-left:auto;margin-right:auto}.aside{margin:34px 0;padding:20px 22px;background:var(--paper-2);color:var(--muted)}.aside strong{display:block;margin-bottom:5px;color:var(--ink)}.aside.accent{background:var(--accent-soft);color:#74452f}.aside.accent strong{color:#8d3f20}.aside.green{background:var(--green-soft);color:#315b49}.aside.green strong{color:var(--green)}blockquote{margin:44px 0;padding:0 0 0 24px;border-left:1px solid var(--accent);font-family:"Instrument Serif",serif;font-size:1.7rem;font-style:italic;line-height:1.35;color:#3d4350}blockquote cite{display:block;margin-top:12px;font:500 11px/1.4 Geist Mono,monospace;color:var(--muted);font-style:normal}
+    .figure{padding:24px 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--rule)}.figure-head{display:flex;justify-content:space-between;gap:32px;margin-bottom:20px}.figure-head strong{font-size:15px}.figure-head span{max-width:430px;color:var(--muted);font:500 10px/1.45 Geist Mono,monospace;text-align:right}.figure-note{margin:16px 0 0;color:var(--muted);font-size:12px}.scroll{overflow:auto}.legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;color:var(--muted);font-size:11px}.legend i{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-2px;border:1px solid currentColor}.legend .p i{background:var(--accent-soft);color:#d18c6e}.legend .d i{background:var(--link-soft);color:#9eb2da}.legend .s i{background:var(--red-soft);color:#c5938d;border-style:dashed}.legend .m i{background:var(--green-soft);color:#91b8a6}
+    .request-life{display:grid;grid-template-columns:120px 2.4fr repeat(4,1fr);gap:4px;min-width:760px}.cell{min-height:56px;padding:8px;border:1px solid var(--rule);display:flex;align-items:center;justify-content:center;text-align:center;font:500 10px/1.3 Geist Mono,monospace;color:var(--muted)}.cell.label{justify-content:flex-start;border:0;color:var(--ink)}.cell.prefill{background:var(--accent-soft);border-color:#dca88f;color:#813f24}.cell.decode{background:var(--link-soft);border-color:#aabce0;color:#284e91}.cell.done{background:var(--green-soft);color:#34634f}.cell.stall{background:var(--red-soft);border-color:#c89791;border-style:dashed;color:#873c34}.cell.wait{background:transparent;border-style:dashed}.axis{min-height:26px;border:0;color:var(--soft)}
+    .schedule-pair{display:grid;grid-template-columns:1fr 1fr;gap:24px}.schedule-panel h4{margin:0 0 6px}.schedule-panel>p{margin-bottom:14px;color:var(--muted);font-size:12px}.schedule-grid{display:grid;grid-template-columns:94px repeat(7,minmax(56px,1fr));gap:3px;min-width:580px}.schedule-grid .cell{min-height:42px;font-size:8px}.schedule-grid .axis{min-height:24px}.motion-ready[data-step-current="1"] [data-schedule-grid]>*:nth-child(8n+2),.motion-ready[data-step-current="2"] [data-schedule-grid]>*:nth-child(8n+3),.motion-ready[data-step-current="3"] [data-schedule-grid]>*:nth-child(8n+4),.motion-ready[data-step-current="4"] [data-schedule-grid]>*:nth-child(8n+5),.motion-ready[data-step-current="5"] [data-schedule-grid]>*:nth-child(8n+6),.motion-ready[data-step-current="6"] [data-schedule-grid]>*:nth-child(8n+7),.motion-ready[data-step-current="7"] [data-schedule-grid]>*:nth-child(8n+8){outline:2px solid var(--accent);outline-offset:-2px;position:relative;z-index:2}.motion-ready[data-frame="static"] [data-schedule-grid]>*{outline:0}.motion-ready .motion-copy [data-motion-item]{opacity:.12;transform:translateY(8px);transition:opacity var(--motion-step) var(--motion-ease),transform var(--motion-step) var(--motion-ease)}.motion-ready .motion-copy [data-motion-item].is-visible,.motion-ready[data-frame="end"] .motion-copy [data-motion-item]{opacity:1;transform:none}.motion-copy{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:18px}.motion-copy li{list-style:none;min-height:72px;padding:10px;border-top:1px solid var(--rule);color:var(--muted);font-size:11px}.motion-copy b{display:block;color:var(--ink);font:600 9px/1.3 Geist Mono,monospace;margin-bottom:5px}.motion-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:18px}.motion-controls button,.segmented button{min-width:44px;min-height:44px;padding:0 13px;border:1px solid var(--rule);border-radius:5px;background:var(--white);color:var(--ink);font:600 11px/1 Geist,sans-serif;cursor:pointer}.motion-controls button:hover,.segmented button:hover{border-color:var(--ink)}.motion-controls button:disabled{opacity:.42;cursor:not-allowed}.keyboard-help{color:var(--soft);font:500 9px/1.4 Geist Mono,monospace}.step-visible{margin-left:auto;color:var(--muted);font:500 10px/1 Geist Mono,monospace}
+    .chunk-lab{padding:24px;background:var(--white);border:1px solid var(--rule)}.chunk-controls{display:grid;grid-template-columns:150px 1fr 170px;gap:18px;align-items:center}.chunk-controls label{font-weight:600}.chunk-controls input{width:100%;accent-color:var(--accent)}.chunk-controls output{text-align:right;font:600 12px/1.3 Geist Mono,monospace}.token-strip{display:grid;grid-template-columns:repeat(16,minmax(42px,1fr));gap:3px;min-width:760px;margin-top:24px}.token{position:relative;min-height:52px;padding:17px 3px 7px;border:1px solid var(--rule);background:#fbfaf6;text-align:center;font:500 9px/1 Geist Mono,monospace}.token.chunk-even{background:var(--accent-soft);border-color:#dfad95;color:#814326}.token.chunk-odd{background:var(--link-soft);border-color:#a9bbe0;color:#2d4f8c}.token.boundary:before{content:"CUT";position:absolute;left:-1px;top:3px;color:var(--accent);font:600 7px/1 Geist Mono,monospace}.chunk-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:18px;background:var(--rule);border:1px solid var(--rule)}.chunk-summary div{padding:14px;background:var(--white)}.chunk-summary b{display:block;font-size:12px}.chunk-summary span{display:block;margin-top:3px;color:var(--muted);font-size:11px}
+    .invariants{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--ink);border-bottom:1px solid var(--rule)}.invariant{padding:20px 20px 22px 0}.invariant+.invariant{padding-left:20px;border-left:1px solid var(--rule)}.invariant b{display:block;margin-bottom:7px}.invariant p{margin:0;color:var(--muted);font-size:13px}.kv-strip{display:flex;gap:3px;margin-top:14px}.kv-strip span{flex:1;padding:8px 2px;text-align:center;border:1px solid var(--rule);font:500 8px/1 Geist Mono,monospace}.kv-strip .old{background:var(--link-soft)}.kv-strip .new{background:var(--accent-soft)}
+    .compare-table,.evidence-table,.tune-table{width:100%;border-collapse:collapse;margin:34px 0;font-size:13px}.compare-table th,.compare-table td,.evidence-table th,.evidence-table td,.tune-table th,.tune-table td{padding:14px 12px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}.compare-table th,.evidence-table th,.tune-table th{border-top:1px solid var(--ink);font-size:11px}.compare-table td,.evidence-table td,.tune-table td{color:var(--muted)}.compare-table td:first-child,.evidence-table td:first-child,.tune-table td:first-child{color:var(--ink);font-weight:600}.is-isnt{display:grid;grid-template-columns:1fr 1fr;gap:36px;margin:38px 0}.is-isnt section{border-top:1px solid var(--ink);padding-top:15px}.is-isnt ul{margin:0;padding-left:20px;color:var(--muted)}.is-isnt li{margin:8px 0}.procon{display:grid;grid-template-columns:150px minmax(0,1fr);gap:24px;padding:18px 0;border-top:1px solid var(--rule)}.procon:last-child{border-bottom:1px solid var(--rule)}.procon b{font-size:14px}.procon p{margin:0;color:var(--muted);font-size:14px}
+    .principle{display:grid;grid-template-columns:100px 210px minmax(0,1fr);gap:24px;padding:24px 0;border-top:1px solid var(--rule)}.principle:first-of-type{border-top:1px solid var(--ink)}.principle-id{color:var(--accent);font:600 10px/1.4 Geist Mono,monospace}.principle h4{margin:0;font-size:1.05rem}.principle h4 code{display:block;margin-top:7px;background:none;padding:0;color:var(--muted);font-size:10px;font-weight:500}.principle p{margin:0;color:var(--muted);font-size:14px}.algorithm{counter-reset:alg;margin:34px 0;border-top:1px solid var(--ink)}.algorithm li{counter-increment:alg;display:grid;grid-template-columns:44px 1fr;gap:14px;padding:14px 0;border-bottom:1px solid var(--rule);list-style:none}.algorithm li:before{content:counter(alg,decimal-leading-zero);color:var(--accent);font:600 10px/1.7 Geist Mono,monospace}.algorithm p{margin:0;color:var(--muted);font-size:14px}
+    .svg-wrap{overflow:auto}.svg-wrap svg{display:block;width:100%;min-width:820px;height:auto}.svg-node{fill:#fffefa;stroke:#4f5d75;stroke-width:1}.svg-node.focal{fill:#f9e8df;stroke:#e26432;stroke-width:1.2}.svg-node.state{fill:#ece9e1;stroke:#7b8392}.svg-title{fill:#292d3a;font:600 13px Geist,sans-serif}.svg-sub{fill:#4f5d75;font:400 9px Geist Mono,monospace}.svg-arrow{fill:none;stroke:#4f5d75;stroke-width:1.2;marker-end:url(#flow-arrow)}.svg-arrow.accent{stroke:#e26432;marker-end:url(#flow-arrow-accent)}
+    .codeblock{margin:34px 0;background:#202532;color:#dce3ef;overflow:auto}.code-head{display:flex;justify-content:space-between;gap:20px;padding:11px 15px;border-bottom:1px solid #3b4351;color:#aeb8c7;font:500 10px/1.4 Geist Mono,monospace}.code-head a{color:#a9c5f5}.codeblock pre{min-width:720px;margin:0;padding:20px;font-size:11px;line-height:1.7}.cm{color:#8e9aac}.kw{color:#f4b082}.fn{color:#86cfad}.str{color:#e9d28f}.state-table{margin:38px 0;border-top:1px solid var(--ink)}.state-row{display:grid;grid-template-columns:180px minmax(0,1fr) 190px;gap:22px;padding:17px 0;border-bottom:1px solid var(--rule)}.state-row b{font-size:13px}.state-row p{margin:0;color:var(--muted);font-size:13px}.state-row code{font-size:10px}
+    .bars{display:grid;gap:20px}.bar-row{display:grid;grid-template-columns:240px minmax(0,1fr) 64px;gap:16px;align-items:center}.bar-label b{display:block;font-size:13px}.bar-label span{display:block;color:var(--muted);font-size:10px}.bar-track{height:28px;background:var(--paper-2);position:relative}.bar-fill{height:100%;background:var(--accent);width:var(--w)}.bar-value{font:600 13px/1 Geist Mono,monospace;color:var(--accent)}.paper-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.paper-card{display:flex;flex-direction:column;min-width:0;border:1px solid var(--rule);background:#fff}.paper-card>a{display:block;padding:14px;background:#fff;text-decoration:none}.paper-card img{display:block;width:100%;height:300px;object-fit:contain}.paper-card.tall img{height:520px}.paper-card figcaption{padding:13px 15px 15px;border-top:1px solid var(--rule);color:var(--muted);font-size:11px}.paper-card figcaption b{display:block;margin-bottom:4px;color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px}.paper-card figcaption a{white-space:nowrap}.paper-full{display:block;padding:14px;background:#fff;text-decoration:none}.paper-full img{display:block;width:100%;max-height:760px;object-fit:contain}.paper-full.compact img{max-height:470px}.paper-reading{display:grid;grid-template-columns:160px minmax(0,1fr);gap:20px;margin-top:22px;padding-top:17px;border-top:1px solid var(--ink)}.paper-reading b{font-family:"JetBrains Mono",monospace;font-size:11px}.paper-reading p{margin:0;color:var(--muted);font-size:13px}.evidence-grid{display:grid;grid-template-columns:1fr 1fr;gap:34px;margin:40px 0}.evidence-block{border-top:1px solid var(--ink);padding-top:16px}.evidence-block strong{display:block;margin-bottom:7px}.evidence-block p{margin:0;color:var(--muted);font-size:13px}.runbook{counter-reset:run;border-top:1px solid var(--ink)}.runbook>div{counter-increment:run;display:grid;grid-template-columns:54px 190px 1fr;gap:18px;padding:17px 0;border-bottom:1px solid var(--rule)}.runbook>div:before{content:counter(run,decimal-leading-zero);color:var(--accent);font:600 10px/1.7 Geist Mono,monospace}.runbook b{font-size:13px}.runbook p{margin:0;color:var(--muted);font-size:13px}.sources{margin-top:70px;padding-top:24px;border-top:1px solid var(--ink)}.sources ol{columns:2;column-gap:40px;padding-left:20px}.sources li{break-inside:avoid;margin-bottom:14px;color:var(--muted);font-size:12px}.source-date{color:var(--soft);font:500 10px/1.4 Geist Mono,monospace}
+    .footer{width:var(--wide);margin:auto;padding:42px 0 64px;display:flex;justify-content:space-between;gap:24px;color:var(--soft);font-size:11px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    @media(max-width:900px){:root{--article:min(100vw - 28px,760px);--wide:min(100vw - 28px,1120px)}.hero{grid-template-columns:1fr;gap:34px;padding-top:86px}.hero-aside{max-width:620px}.schedule-pair,.evidence-grid{grid-template-columns:1fr}.motion-copy{grid-template-columns:repeat(4,1fr)}.invariants{grid-template-columns:1fr}.invariant+.invariant{padding-left:0;border-left:0;border-top:1px solid var(--rule)}.principle{grid-template-columns:76px 1fr}.principle p{grid-column:2}.state-row{grid-template-columns:140px 1fr}.state-row code{grid-column:2}.runbook>div{grid-template-columns:42px 1fr}.runbook p{grid-column:2}.compare-table,.evidence-table,.tune-table{display:block;max-width:calc(100vw - 28px);overflow:auto}.figure-head{display:block}.figure-head span{display:block;margin-top:6px;text-align:left}.bar-row{grid-template-columns:190px 1fr 52px}}
+    @media(max-width:620px){body{font-size:16px}.topbar-inner{height:58px}.brand{display:none}nav{margin-left:0}.hero{min-height:auto;padding:76px 0 58px}h1{font-size:4rem}.hero-thesis{font-size:1.65rem}.is-isnt,.chunk-summary{grid-template-columns:1fr}.chunk-controls{grid-template-columns:1fr}.chunk-controls output{text-align:left}.motion-copy{grid-template-columns:1fr 1fr}.keyboard-help{width:100%}.step-visible{margin-left:0}.principle{grid-template-columns:1fr;gap:7px}.principle p{grid-column:auto}.state-row{grid-template-columns:1fr;gap:5px}.state-row code{grid-column:auto}.runbook>div{grid-template-columns:36px 1fr}.bar-row{grid-template-columns:1fr 48px}.bar-track{grid-column:1}.bar-value{grid-column:2;grid-row:2}.sources ol{columns:1}.footer{flex-direction:column}.procon{grid-template-columns:1fr;gap:5px}}
+    @media print{.topbar,body:before,[data-motion-controls]{display:none!important}.section{break-before:page;padding:50px 0}.wide{width:100%;margin-left:0;transform:none}.figure,.codeblock{break-inside:avoid}a{color:inherit;text-decoration:none}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}[data-motion-item]{opacity:1!important;transform:none!important}[data-motion-decorative],[data-motion-controls]{display:none!important}}
+  </style>
+  <style>
+    /* Visual language aligned with position_encoding.html: light signal-lab editorial. */
+    :root{
+      --paper:#f8fafc;--paper-2:#f1f5f9;--white:#ffffff;--ink:#0f172a;--muted:#475569;--soft:#64748b;
+      --rule:rgba(0,0,0,.10);--accent:#0284c7;--accent-soft:#e0f2fe;--link:#0284c7;--link-soft:#e0f2fe;
+      --green:#059669;--green-soft:#ecfdf5;--red:#db2777;--red-soft:#fce7f3;
+      --cyan:#0369a1;--magenta:#be185d;--amber:#b45309;--phosphor:#047857;--coral:#c2410c;--purple:#6d28d9;
+    }
+    body{font-family:"IBM Plex Sans",sans-serif;background:var(--paper);color:var(--ink);line-height:1.72}
+    code,pre,.mono,.brand,nav a,.section-index,.figure-head span,.cell,.keyboard-help,.step-visible,.token,.principle-id,.svg-sub,.code-head,.bar-value,.source-date{font-family:"JetBrains Mono",monospace}
+    h1,h2{font-family:"JetBrains Mono",monospace;font-weight:700;font-style:normal}
+    h1{font-size:clamp(3.2rem,8vw,5rem);line-height:1.04;letter-spacing:-.035em}
+    h1 em{color:var(--cyan);font-style:normal;font-weight:700;text-shadow:0 0 30px rgba(2,132,199,.14)}
+    h2{font-size:clamp(2rem,4vw,3.1rem);line-height:1.08;letter-spacing:-.03em}
+    h3{font-family:"JetBrains Mono",monospace;font-size:clamp(1.35rem,2.6vw,1.9rem)}
+    strong{font-weight:600}::selection{background:rgba(2,132,199,.2);color:var(--ink)}
+    body:before{background:var(--cyan)}
+    .topbar{background:rgba(248,250,252,.94);border-color:var(--rule);backdrop-filter:blur(10px)}
+    .brand span{color:var(--cyan)}
+    nav{gap:7px}nav a{padding:8px 10px;border:1px solid transparent;border-radius:4px;font-size:10px}nav a:hover,nav a.active{border-color:rgba(2,132,199,.3);background:rgba(2,132,199,.05);color:var(--cyan)}
+    .hero{position:relative;display:block;min-height:86vh;padding:132px 0 88px;text-align:center;border-color:var(--rule)}
+    .hero:before{content:"";position:absolute;inset:0;z-index:-2;background:radial-gradient(ellipse at center,rgba(2,132,199,.06),transparent 68%)}
+    .hero:after{content:"";position:absolute;inset:0;z-index:-1;background-image:linear-gradient(rgba(15,23,42,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(15,23,42,.028) 1px,transparent 1px);background-size:60px 60px;mask-image:linear-gradient(to bottom,black,transparent 88%)}
+    .hero-copy{max-width:900px;margin:auto}.hero-copy>p{margin-left:auto;margin-right:auto;max-width:680px;font-size:1.13rem}.hero-aside{max-width:820px;margin:64px auto 0;display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:20px 0 0;text-align:left;border-color:var(--rule)}
+    .hero-aside p{padding-right:18px}.hero-aside p+p{border-left:1px solid var(--rule);padding-left:22px}.hero-thesis{font-family:"IBM Plex Sans",sans-serif;font-size:1.2rem;font-style:normal;font-weight:500;text-align:center;color:var(--text-muted);border-color:var(--rule)}
+    .section{--section-color:var(--cyan);min-height:100vh;padding:104px 0;border-color:var(--rule)}
+    #why{--section-color:var(--cyan)}#mechanism{--section-color:var(--magenta)}#tradeoffs{--section-color:var(--amber)}#design{--section-color:var(--phosphor)}#sglang{--section-color:var(--coral)}#vllm{--section-color:var(--purple)}#evaluation{--section-color:#0f766e}
+    .section-index{margin-bottom:6px;color:var(--section-color);font-size:3.5rem;font-weight:700;line-height:1;letter-spacing:-.04em;opacity:.13}
+    .section-head{margin-bottom:50px}.section-head .lead{max-width:700px;font-size:1.05rem}.section h3{color:var(--section-color)}
+    .figure{position:relative;padding:26px;border:1px solid var(--rule);border-radius:12px;background:var(--white);box-shadow:0 4px 20px rgba(0,0,0,.035)}
+    .figure:before{content:"";position:absolute;inset:0 0 auto;height:3px;border-radius:12px 12px 0 0;background:linear-gradient(90deg,var(--section-color),transparent 72%)}
+    .figure-head strong{font-family:"JetBrains Mono",monospace}.figure-head span{font-size:9px;letter-spacing:.04em}
+    .aside{border:1px solid var(--rule);border-radius:8px;background:var(--paper-2)}.aside.accent{background:rgba(217,119,6,.06);border-color:rgba(217,119,6,.18);color:#795017}.aside.accent strong{color:var(--amber)}.aside.green{background:rgba(5,150,105,.05);border-color:rgba(5,150,105,.18);color:#356957}.aside.green strong{color:var(--phosphor)}
+    blockquote{font-family:"IBM Plex Sans",sans-serif;font-size:1.35rem;font-style:normal;border-color:var(--section-color);color:#334155}
+    .cell{background:#f8fafc;border-color:var(--rule)}.cell.prefill{background:#fff7ed;border-color:#fdba74;color:#9a3412}.cell.decode{background:#e0f2fe;border-color:#7dd3fc;color:#075985}.cell.done{background:#ecfdf5;border-color:#86efac;color:#166534}.cell.stall{background:#fdf2f8;border-color:#f9a8d4;color:#9d174d}.cell.wait{background:#f8fafc;color:#64748b}
+    .legend .p i{background:#fff7ed;color:#fdba74}.legend .d i{background:#e0f2fe;color:#7dd3fc}.legend .s i{background:#fdf2f8;color:#f9a8d4}.legend .m i{background:#ecfdf5;color:#86efac}
+    .motion-ready[data-step-current="1"] [data-schedule-grid]>*:nth-child(8n+2),.motion-ready[data-step-current="2"] [data-schedule-grid]>*:nth-child(8n+3),.motion-ready[data-step-current="3"] [data-schedule-grid]>*:nth-child(8n+4),.motion-ready[data-step-current="4"] [data-schedule-grid]>*:nth-child(8n+5),.motion-ready[data-step-current="5"] [data-schedule-grid]>*:nth-child(8n+6),.motion-ready[data-step-current="6"] [data-schedule-grid]>*:nth-child(8n+7),.motion-ready[data-step-current="7"] [data-schedule-grid]>*:nth-child(8n+8){outline-color:var(--cyan)}
+    .motion-controls{padding:14px;margin-top:18px;border:1px solid var(--rule);border-radius:8px;background:rgba(241,245,249,.82)}.motion-controls button{font-family:"JetBrains Mono",monospace;font-size:10px;border-color:var(--rule);background:transparent;color:var(--muted)}.motion-controls button:hover{border-color:rgba(2,132,199,.35);background:rgba(2,132,199,.05);color:var(--cyan)}
+    .chunk-lab{border-radius:8px;background:var(--white)}.chunk-controls label,.chunk-controls output{font-family:"JetBrains Mono",monospace}.chunk-controls input{appearance:none;height:4px;border-radius:2px;background:#cbd5e1;accent-color:var(--magenta)}.chunk-controls input::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border:2px solid var(--white);border-radius:50%;background:var(--magenta);box-shadow:0 0 8px rgba(219,39,119,.35);cursor:pointer}.token.chunk-even{background:#fdf2f8;border-color:#f9a8d4;color:#9d174d}.token.chunk-odd{background:#f5f3ff;border-color:#c4b5fd;color:#6d28d9}.token.boundary:before{color:var(--magenta)}
+    .chunk-summary{background:var(--rule);border-color:var(--rule)}.chunk-summary div{background:var(--white)}
+    .invariants{border-color:var(--rule)}.invariant+.invariant{border-color:var(--rule)}.kv-strip .old{background:#e0f2fe}.kv-strip .new{background:#fdf2f8}
+    .compare-table th,.evidence-table th,.tune-table th{font-family:"JetBrains Mono",monospace;background:var(--paper-2);font-weight:500;color:var(--muted)}.compare-table tr:hover,.evidence-table tr:hover,.tune-table tr:hover{background:rgba(15,23,42,.02)}.code-map{table-layout:fixed}.code-map th:nth-child(1){width:15%}.code-map th:nth-child(2){width:19%}.code-map th:nth-child(3){width:28%}.code-map td:nth-child(3){font-family:"JetBrains Mono",monospace;font-size:11px}.code-map td:nth-child(3) code{background:transparent;padding:0;color:var(--coral)}
+    .impact-table{width:100%;border-collapse:collapse;margin:0;font-size:13px}.impact-table th,.impact-table td{padding:15px 13px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}.impact-table th{border-top:1px solid var(--ink);background:var(--paper-2);font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;color:var(--muted)}.impact-table td{color:var(--muted)}.impact-table td:first-child{color:var(--ink);font-weight:600}.impact-table .group-row td{padding:12px 13px;background:#fff7ed;color:#9a3412;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600}.impact-table .direction{white-space:nowrap;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600}.impact-table .better{color:#047857}.impact-table .trade{color:#b45309}.impact-table .same{color:#475569}.metric-reading{margin-top:24px;padding-top:17px;border-top:1px solid var(--ink);display:grid;grid-template-columns:180px 1fr;gap:22px}.metric-reading b{font-size:13px}.metric-reading p{margin:0;color:var(--muted);font-size:13px}
+    .takeaway{width:var(--article);margin:66px auto 34px;padding:26px 0;border-top:2px solid var(--amber);border-bottom:1px solid var(--rule)}.takeaway h3{margin:0 0 12px;color:var(--amber)}.takeaway p{margin:0;font-size:1.15rem;color:#334155}.takeaway strong{color:var(--ink)}
+    .operating-lab{padding:26px}.operating-control{display:grid;grid-template-columns:150px 1fr 150px;gap:18px;align-items:center;padding-bottom:20px;border-bottom:1px solid var(--rule)}.operating-control label{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:600}.operating-control input{appearance:none;width:100%;height:4px;border-radius:2px;background:#cbd5e1;accent-color:var(--amber)}.operating-control input::-webkit-slider-thumb{appearance:none;width:15px;height:15px;border:2px solid var(--white);border-radius:50%;background:var(--amber);box-shadow:0 2px 7px rgba(15,23,42,.18);cursor:pointer}.operating-control output{text-align:right;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--amber)}.operating-summary{margin:15px 0 22px;color:var(--muted);font-size:13px}.operating-scroll{overflow:auto}.operating-grid{display:grid;grid-template-columns:190px minmax(190px,1fr) minmax(190px,1fr) 120px;min-width:760px;border-top:1px solid var(--ink)}.op-head,.op-cell{padding:12px 10px;border-bottom:1px solid var(--rule)}.op-head{background:var(--paper-2);font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}.op-metric b{display:block;font-size:13px}.op-metric span{display:block;margin-top:4px;color:var(--muted);font-size:11px}.op-track{height:13px;margin:4px 0 5px;background:#e2e8f0;overflow:hidden}.op-fill{display:block;height:100%;width:var(--value);background:#94a3b8;transition:width 220ms cubic-bezier(.16,1,.3,1)}.op-fill.enabled{background:var(--amber)}.op-value{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}.op-effect{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600}.op-effect.better{color:#047857}.op-effect.worse{color:#b45309}.op-effect.same{color:#475569}.operating-note{margin:17px 0 0;color:var(--muted);font-size:12px}
+    .principle-id{color:var(--section-color)}.algorithm li:before{color:var(--section-color)}
+    .policy-loop{display:grid;grid-template-columns:150px 28px 150px 28px 150px 28px 150px 28px 150px 28px 150px;grid-template-rows:auto auto;gap:0;align-items:center;min-width:1040px}.policy-loop-step{min-height:112px;padding:15px 13px;border:1px solid var(--rule);background:#fff;display:flex;flex-direction:column;justify-content:center}.policy-loop-step span{display:block;margin-bottom:7px;color:var(--phosphor);font-family:"JetBrains Mono",monospace;font-size:9px;font-weight:700}.policy-loop-step b{font-size:13px}.policy-loop-step small{display:block;margin-top:6px;color:var(--muted);font-size:10px;line-height:1.5}.policy-loop-step.state{background:var(--paper-2)}.policy-loop-step.continuation{border-color:#c4b5fd;background:#f5f3ff}.policy-loop-step.sizing{border-color:#86efac;background:#ecfdf5}.policy-loop-step.admission{border-color:#fde68a;background:#fffbeb}.policy-loop-step.composition{border-color:#f9a8d4;background:#fdf2f8}.policy-loop-step.execute{border-color:#7dd3fc;background:#f0f9ff}.policy-loop-arrow{text-align:center;color:#64748b;font-family:"JetBrains Mono",monospace}.policy-loop-feedback{grid-column:3/12;margin-top:12px;padding:11px 14px;border-top:1px solid var(--coral);background:#fff7ed;color:#7c4a2d;font-size:11px}.policy-loop-feedback:before{content:"↶";margin-right:8px;color:var(--coral);font-size:18px}.policy-loop-feedback b{margin-right:10px;color:#9a3412;font-family:"JetBrains Mono",monospace;font-size:9px}.policy-budget-note{display:grid;grid-template-columns:190px minmax(0,1fr);gap:20px;margin-top:20px;padding-top:17px;border-top:1px solid var(--ink)}.policy-budget-note b{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--phosphor)}.policy-budget-note span{color:var(--muted);font-size:13px}.policy-handoff td:nth-child(2){color:var(--phosphor);font-family:"JetBrains Mono",monospace;font-size:11px}
+    .policy-detail{margin:58px 0 0}.policy-detail:first-child{margin-top:28px}.policy-detail-head{display:grid;grid-template-columns:96px minmax(0,1fr);gap:18px;padding:18px 0;border-top:2px solid var(--ink);border-bottom:1px solid var(--rule)}.policy-detail-id{color:var(--phosphor);font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600}.policy-detail-head h3{margin:0;color:var(--ink);font-size:1.38rem}.policy-detail-question{display:block;margin-top:6px;color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:400}.policy-contract{display:grid;grid-template-columns:repeat(4,1fr)}.policy-contract>section{padding:18px 16px 20px 0}.policy-contract>section+section{padding-left:16px;border-left:1px solid var(--rule)}.policy-contract h4{margin:0 0 7px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--phosphor)}.policy-contract p{margin:0;color:var(--muted);font-size:12px}.policy-trace{display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;padding:15px 0;border-top:1px solid var(--rule)}.policy-trace b{font-size:13px}.policy-trace p{margin:0;color:var(--muted);font-size:13px}.policy-trace code{word-break:break-word}.policy-coupling{margin:42px 0 0;padding:20px;background:var(--paper-2)}.policy-coupling strong{display:block;margin-bottom:8px}.policy-coupling p{margin:0;color:var(--muted);font-size:13px}
+    .additional-reading{margin-top:46px;margin-bottom:46px}.additional-reading>summary{display:grid;grid-template-columns:160px minmax(0,1fr) auto;gap:18px;align-items:center;padding:18px 20px;border:1px solid var(--rule);border-left:3px solid var(--section-color);border-radius:8px;background:var(--white);cursor:pointer;list-style:none}.additional-reading>summary::-webkit-details-marker{display:none}.additional-reading>summary:hover{background:var(--paper-2)}.additional-reading>summary:after{content:"Expand +";color:var(--section-color);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600}.additional-reading[open]>summary:after{content:"Collapse −"}.additional-tag{color:var(--section-color);font-family:"JetBrains Mono",monospace;font-size:9px;font-weight:700;letter-spacing:.08em}.additional-reading>summary b{font-size:14px;line-height:1.45}.additional-hint{grid-column:2;color:var(--muted);font-size:11px}.additional-body{padding-top:26px}.additional-wide>summary{width:var(--article);margin-left:auto;margin-right:auto}
+    .scheduler-live{padding:0;overflow:hidden;border-color:rgba(194,65,12,.2);background:#fff}.scheduler-live:before{background:linear-gradient(90deg,var(--coral),var(--magenta),transparent 82%)}.live-head{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:22px 24px 18px;border-bottom:1px solid var(--rule)}.live-kicker{display:block;margin-bottom:3px;color:var(--coral);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.08em}.live-head h3{margin:0;color:var(--ink);font-size:1.15rem}.live-legend{display:flex;justify-content:flex-end;gap:14px;flex-wrap:wrap;color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:9px}.live-legend span{white-space:nowrap}.live-legend i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%;background:var(--dot);box-shadow:0 0 0 3px color-mix(in srgb,var(--dot) 12%,transparent)}.live-scroll{overflow:auto;padding:12px 16px 4px}.live-svg{display:block;width:100%;min-width:980px;height:auto}.arch-band{fill:#f8fafc;stroke:rgba(15,23,42,.07)}.arch-band-label{font:600 9px "JetBrains Mono",monospace;letter-spacing:.08em;fill:#94a3b8}.arch-edge{fill:none;stroke:#64748b;stroke-width:1.25;stroke-opacity:.34;stroke-dasharray:5 7;marker-end:url(#scheduler-arrow);animation:arch-flow 1.4s linear infinite;transition:stroke 180ms ease,stroke-opacity 180ms ease,stroke-width 180ms ease}.arch-edge.secondary{stroke-dasharray:3 7;stroke-opacity:.24}.arch-edge.feedback{stroke:#c2410c;stroke-opacity:.32}.arch-node{cursor:pointer;outline:none;transition:opacity 180ms ease}.arch-box{fill:#fff;stroke:var(--node);stroke-width:1;stroke-opacity:.58;transition:fill 180ms ease,stroke-width 180ms ease,filter 180ms ease}.arch-stripe{fill:var(--node)}.arch-title{fill:#0f172a;font:600 12px "IBM Plex Sans",sans-serif}.arch-code{fill:var(--node);font:500 8px "JetBrains Mono",monospace}.arch-node:hover .arch-box,.arch-node:focus-visible .arch-box,.arch-node.is-related .arch-box{fill:color-mix(in srgb,var(--node) 7%,white);stroke-width:1.8;filter:drop-shadow(0 5px 8px rgba(15,23,42,.08))}.scheduler-live.has-focus .arch-node:not(.is-related){opacity:.24}.scheduler-live.has-focus .arch-edge:not(.is-related){stroke-opacity:.055}.scheduler-live.has-focus .arch-edge.is-related{stroke:var(--coral);stroke-width:2.2;stroke-opacity:.9}.arch-particle{filter:drop-shadow(0 0 4px currentColor)}.live-explain{display:grid;grid-template-columns:180px minmax(0,1fr);gap:20px;align-items:start;margin:0;padding:18px 24px;border-top:1px solid var(--rule);background:#fff7ed}.live-explain b{color:#9a3412;font-family:"JetBrains Mono",monospace;font-size:11px}.live-explain span{color:#7c4a2d;font-size:13px}.live-cycle{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:1px;background:var(--rule);border-top:1px solid var(--rule)}.live-cycle span{min-height:62px;padding:11px;background:#fff;color:var(--muted);font-size:10px;line-height:1.45}.live-cycle b{display:block;margin-bottom:3px;color:var(--coral);font-family:"JetBrains Mono",monospace;font-size:9px}.scheduler-live figcaption{padding:13px 24px;color:var(--muted);font-size:11px}.scheduler-live figcaption code{color:var(--coral)}@keyframes arch-flow{to{stroke-dashoffset:-24}}
+    .svg-node{fill:#fff;stroke:#64748b}.svg-node.focal{fill:#ecfdf5;stroke:#059669}.svg-node.state{fill:#f1f5f9;stroke:#94a3b8}.svg-title{font-family:"IBM Plex Sans",sans-serif;fill:#0f172a}.svg-sub{font-family:"JetBrains Mono",monospace;fill:#475569}.svg-arrow{stroke:#64748b}.svg-arrow.accent{stroke:#059669}
+    .codeblock{border-radius:8px;background:#0f172a}.code-head{background:#111b2e}.code-head a{color:#7dd3fc}.cm{color:#94a3b8}.kw{color:#f9a8d4}.fn{color:#6ee7b7}.str{color:#fde68a}
+    /* A .codeblock declared after .wide used to overwrite its auto margins while
+       leaving translateX(-50%) active, which moved every wide code sample off-screen. */
+    .wide{margin:48px auto 52px;transform:none}
+    .wide.codeblock{margin:48px auto 52px}
+    .bar-track{background:var(--paper-2);border-radius:3px;overflow:hidden}.bar-fill{background:var(--purple)}.bar-value{color:var(--purple)}
+    .sources{border-color:var(--rule)}
+    .roofline-pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}.roofline-panel{min-width:0;padding:18px;border:1px solid var(--rule);background:#fff}.roofline-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:8px}.roofline-panel-head b{font-size:14px}.roofline-panel-head span{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--muted)}.roofline-scroll{overflow:auto}.roofline-svg{display:block;width:100%;min-width:480px;height:auto}.roof-grid{stroke:#e2e8f0;stroke-width:1}.roof-axis{stroke:#64748b;stroke-width:1.4}.roof-ceiling{fill:none;stroke:#0f172a;stroke-width:2.4;stroke-linejoin:round}.roof-zone-memory{fill:rgba(2,132,199,.045)}.roof-zone-compute{fill:rgba(15,23,42,.025)}.roof-axis-label{fill:#475569;font:500 10px "JetBrains Mono",monospace}.roof-tick{fill:#64748b;font:500 9px "JetBrains Mono",monospace}.roof-region{fill:#334155;font:600 11px "IBM Plex Sans",sans-serif}.roof-equation{fill:#475569;font:500 9px "JetBrains Mono",monospace}.roof-prefill-path{fill:none;stroke:var(--cyan);stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round}.roof-decode-path{fill:none;stroke:var(--purple);stroke-width:2;stroke-dasharray:6 5;stroke-linecap:round}.roof-point{fill:#fff;stroke-width:2.4}.roof-point.prefill{stroke:var(--cyan)}.roof-point.decode{stroke:var(--purple)}.roof-point-label{fill:#0f172a;font:600 9px "JetBrains Mono",monospace}.roof-note{fill:#475569;font:500 9px "IBM Plex Sans",sans-serif}.roof-knee{fill:#fff;stroke:#0f172a;stroke-width:2}.roof-callout{fill:#fff;stroke:#cbd5e1;stroke-width:1}.roofline-reading{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:20px}.roofline-reading>div{padding-top:15px;border-top:1px solid var(--rule)}.roofline-reading b{display:block;margin-bottom:6px;font-family:"JetBrains Mono",monospace;font-size:11px}.roofline-reading p{margin:0;color:var(--muted);font-size:13px}.roofline-reading .prefill-read b{color:var(--cyan)}.roofline-reading .decode-read b{color:var(--purple)}.equation{margin:30px 0;padding:18px 20px;background:#0f172a;color:#e2e8f0;font-family:"JetBrains Mono",monospace;font-size:12px;line-height:1.8;overflow:auto}.equation strong{color:#7dd3fc}.equation small{display:block;color:#cbd5e1;font-family:"IBM Plex Sans",sans-serif;font-size:12px}.bottleneck-rule{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin:26px 0;background:var(--rule);border:1px solid var(--rule)}.bottleneck-rule>div{padding:18px;background:var(--white)}.bottleneck-rule b{display:block;margin-bottom:5px;font-size:13px}.bottleneck-rule p{margin:0;font-size:13px;color:var(--muted)}
+    .mm-flow{display:grid;grid-template-columns:1fr 24px 1fr 24px 1fr 24px 1fr;align-items:stretch;gap:8px}.mm-stage{padding:16px 14px;border:1px solid var(--rule);background:#fff}.mm-stage b{display:block;margin-bottom:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--magenta)}.mm-stage span{display:block;color:var(--muted);font-size:12px;line-height:1.55}.mm-arrow{display:flex;align-items:center;justify-content:center;color:var(--magenta);font-size:18px}.mm-sequence{display:grid;grid-template-columns:128px minmax(360px,1fr) 96px;margin-top:22px;border:1px solid var(--rule);overflow:auto}.mm-segment{position:relative;min-height:82px;padding:17px 12px;border-right:1px solid var(--rule);font-family:"JetBrains Mono",monospace;font-size:11px}.mm-segment:last-child{border-right:0}.mm-segment.text{background:#e0f2fe;color:#075985}.mm-segment.visual{background:repeating-linear-gradient(90deg,#fdf2f8 0,#fdf2f8 51px,#fce7f3 51px,#fce7f3 52px);color:#9d174d}.mm-segment b{display:block;margin-bottom:5px}.mm-cuts{display:flex;gap:0;margin-top:12px}.mm-cut{padding:8px 12px;border-top:2px solid var(--magenta);font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted)}.mm-cut+.mm-cut{border-left:1px dashed var(--magenta)}.mm-guardrails{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}.mm-guardrails>div{padding-top:14px;border-top:1px solid var(--rule)}.mm-guardrails b{display:block;margin-bottom:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--magenta)}.mm-guardrails p{margin:0;color:var(--muted);font-size:12px}.mm-frameworks{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:26px}.mm-frameworks>div{padding:18px;border:1px solid var(--rule);background:var(--paper-2)}.mm-frameworks h4{margin:0 0 8px;font-family:"JetBrains Mono",monospace;font-size:12px}.mm-frameworks p{margin:0;color:var(--muted);font-size:12px}
+    .latency-timeline{display:grid;grid-template-columns:130px repeat(8,minmax(56px,1fr));gap:3px;min-width:760px}.latency-timeline .cell{min-height:44px}.cell.itl-gap{background:#fdf2f8;border-color:#f9a8d4;border-style:dashed;color:#9d174d}.cell.ttft{background:#fef3c7;border-color:#fcd34d;color:#92400e}.latency-callout{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:22px}.latency-callout>div{padding-top:16px;border-top:1px solid var(--rule)}.latency-callout b{font-family:"JetBrains Mono",monospace;font-size:11px}.latency-callout p{margin:7px 0 0;font-size:13px;color:var(--muted)}
+    .parallel-brief{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:34px}.parallel-brief>div{padding-top:18px;border-top:1px solid var(--rule)}.parallel-brief h4{margin:0 0 8px;font-family:"JetBrains Mono",monospace}.parallel-brief p{font-size:13px;color:var(--muted)}
+    .pp-details{margin:30px 0;border:1px solid var(--rule);border-radius:8px;background:var(--white);overflow:hidden}.pp-details summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 20px;cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:600;list-style:none}.pp-details summary::-webkit-details-marker{display:none}.pp-details summary:after{content:"Play animation";color:var(--cyan);font-size:11px;font-weight:500}.pp-details[open] summary{border-bottom:1px solid var(--rule)}.pp-details[open] summary:after{content:"Collapse"}.pp-details summary:hover{background:var(--paper-2)}.pp-body{padding:22px}.pp-grid{display:grid;grid-template-columns:100px repeat(6,minmax(62px,1fr));gap:4px;min-width:600px}.pp-cell{min-height:42px;padding:8px;display:flex;align-items:center;justify-content:center;border:1px solid var(--rule);font-family:"JetBrains Mono",monospace;font-size:11px}.pp-cell.axis{min-height:28px;color:#475569}.pp-cell.stage{justify-content:flex-start;border:0;color:var(--ink)}.pp-cell.work{background:#ecfdf5;border-color:#86efac;color:#166534}.pp-cell.bubble{background:#f8fafc;border-style:dashed;color:#64748b}.pp-details.is-playing .pp-cell.work{animation:pp-fill 420ms cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--order) * 130ms)}.pp-details.is-playing .pp-cell.bubble{animation:pp-bubble 360ms ease-out both;animation-delay:calc(var(--order) * 130ms)}@keyframes pp-fill{from{opacity:.28;clip-path:inset(0 100% 0 0);box-shadow:none}to{opacity:1;clip-path:inset(0);box-shadow:0 3px 10px rgba(5,150,105,.09)}}@keyframes pp-bubble{from{opacity:.22}to{opacity:1}}.pp-math{display:grid;grid-template-columns:1fr auto;gap:20px;margin-top:18px;padding-top:16px;border-top:1px solid var(--rule);font-size:13px;color:var(--muted)}.pp-math code{white-space:nowrap;color:#047857}
+    .invariant-deck{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.invariant-card{border:1px solid var(--rule);border-radius:10px;background:var(--white);overflow:hidden}.invariant-card summary{min-height:164px;padding:20px;cursor:pointer;list-style:none}.invariant-card summary::-webkit-details-marker{display:none}.invariant-card summary:hover{background:var(--paper-2)}.invariant-card summary:focus-visible{outline-offset:-4px}.invariant-title{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.invariant-title b{font-size:15px}.invariant-title span{color:var(--magenta);font-family:"JetBrains Mono",monospace;font-size:11px}.invariant-card[open] .invariant-title span{font-size:0}.invariant-card[open] .invariant-title span:after{content:"Collapse";font-size:11px}.invariant-summary{margin:8px 0 15px;color:var(--muted);font-size:13px;line-height:1.55}.mini-proof{display:flex;align-items:center;gap:4px;min-height:30px}.mini-proof span{min-width:30px;padding:7px 5px;border:1px solid var(--rule);background:var(--paper-2);font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center}.mini-proof .history{background:#e0f2fe;border-color:#7dd3fc;color:#075985}.mini-proof .current{background:#fdf2f8;border-color:#f9a8d4;color:#9d174d}.mini-proof .cut{min-width:auto;border:0;background:transparent;color:var(--magenta);font-size:12px}.invariant-detail{padding:18px 20px 20px;border-top:1px solid var(--rule);background:#fbfdff}.invariant-detail>p{margin:0 0 14px;font-size:13px;color:var(--muted)}.invariant-detail strong{color:var(--ink)}.proof-row{display:grid;grid-template-columns:90px 1fr;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--rule)}.proof-row:first-of-type{border-top:0}.proof-row>b{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}.proof-tokens{display:flex;flex-wrap:wrap;gap:3px}.proof-tokens span{min-width:28px;padding:7px 5px;border:1px solid var(--rule);font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center}.proof-tokens .history{background:#e0f2fe;border-color:#7dd3fc;color:#075985}.proof-tokens .current{background:#fdf2f8;border-color:#f9a8d4;color:#9d174d}.proof-tokens .masked{background:#f8fafc;border-style:dashed;color:#64748b}.proof-tokens .wrong{text-decoration:line-through;background:#fff7ed;color:#9a3412}.invariant-conclusion{width:var(--wide);margin:18px 50% 0;transform:translateX(-50%);padding:16px 20px;border-top:1px solid var(--magenta);background:rgba(219,39,119,.045);font-size:13px;color:var(--muted)}.invariant-conclusion strong{color:var(--ink)}
+    .mixed-schedule{display:grid;grid-template-columns:168px minmax(0,1fr);gap:6px 14px;align-items:center}.mix-label{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}.mix-label b{display:block;color:var(--ink);font-size:12px}.mix-slots{display:grid;grid-template-columns:repeat(8,minmax(46px,1fr));gap:3px;min-width:430px}.mix-slot{min-height:42px;padding:6px 3px;display:flex;align-items:center;justify-content:center;border:1px solid var(--rule);font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center}.mix-slot.prefill{background:#fdf2f8;border-color:#f9a8d4;color:#9d174d}.mix-slot.decode{background:#e0f2fe;border-color:#7dd3fc;color:#075985}.mix-slot.wait{background:#fff7ed;border-style:dashed;color:#9a3412}.mix-slot.empty{background:#f8fafc;border-style:dashed;color:#64748b}.mix-divider{grid-column:1/-1;height:1px;background:var(--rule);margin:8px 0}.mix-legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;font-size:12px;color:var(--muted)}.mix-legend span:before{content:"";display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:-1px;border:1px solid var(--rule)}.mix-legend .decode-key:before{background:#e0f2fe;border-color:#7dd3fc}.mix-legend .prefill-key:before{background:#fdf2f8;border-color:#f9a8d4}.mix-legend .wait-key:before{background:#fff7ed;border-color:#fdba74;border-style:dashed}.scheduler-rule{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;margin:22px 0 0;padding:16px 18px;background:var(--paper-2)}.scheduler-rule code{white-space:nowrap;color:var(--magenta)}.scheduler-rule p{margin:0;font-size:13px;color:var(--muted)}
+    .mix-economics{margin:30px 0 6px;border-top:1px solid var(--ink)}.mix-economics h4{margin:18px 0 8px;font-family:"JetBrains Mono",monospace}.mix-economics>p{font-size:13px;color:var(--muted)}.resource-line{display:grid;grid-template-columns:150px 155px minmax(0,1fr);gap:18px;padding:14px 0;border-top:1px solid var(--rule);align-items:start}.resource-line b{font-size:13px}.resource-line code{background:transparent;padding:0;color:var(--magenta)}.resource-line p{margin:0;font-size:13px;color:var(--muted)}.resource-line.mixed b{color:var(--magenta)}
+    .reference-image-link{display:block;background:#fff;text-decoration:none}.reference-image{display:block;width:100%;height:auto}.reference-caption{display:flex;justify-content:space-between;gap:24px;margin-top:16px;color:var(--muted);font-size:12px}.reference-caption span:last-child{font-family:"JetBrains Mono",monospace;white-space:nowrap}
+    .context-pp{display:grid;grid-template-columns:1fr 1fr;gap:24px}.context-pp>section{padding:24px;border-top:1px solid var(--ink);background:var(--white)}.context-pp h4{margin:0 0 8px;font-family:"JetBrains Mono",monospace}.context-pp p{font-size:13px;color:var(--muted)}.cost-row{display:grid;grid-template-columns:104px 1fr 74px;gap:10px;align-items:center;margin-top:11px}.cost-row b,.cost-row span{font-family:"JetBrains Mono",monospace;font-size:11px}.cost-row span{text-align:right;color:var(--muted)}.cost-track{height:10px;background:#e2e8f0;overflow:hidden}.cost-fill{display:block;height:100%;background:var(--magenta)}.cost-fill.balanced{background:var(--phosphor)}.stage-cadence{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:18px}.stage-cadence span{padding:11px 4px;border:1px solid var(--rule);background:#ecfdf5;color:#166534;font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center}.stage-cadence span.slow{background:#fff7ed;border-color:#fdba74;color:#9a3412}.optimization-rule{margin-top:18px;padding-top:14px;border-top:1px solid var(--rule);font-size:13px;color:var(--muted)}
+    .deep-formula{margin:28px 0;padding:20px;background:#0f172a;color:#e2e8f0;overflow:auto}.deep-formula b{display:block;margin-bottom:9px;color:#f9a8d4;font-family:"JetBrains Mono",monospace;font-size:12px}.deep-formula code{display:block;background:transparent;padding:0;color:#f8fafc;font-size:13px;line-height:1.9;white-space:nowrap}.deep-formula p{margin:10px 0 0;color:#cbd5e1;font-size:12px}.optimizer-path{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);border:1px solid var(--rule)}.optimizer-phase{padding:24px;background:var(--white)}.optimizer-phase h4{margin:0 0 7px;font-family:"JetBrains Mono",monospace}.optimizer-phase>p{font-size:13px;color:var(--muted)}.optimizer-steps{counter-reset:opt;margin:18px 0 0;padding:0;list-style:none}.optimizer-steps li{counter-increment:opt;display:grid;grid-template-columns:28px 1fr;gap:10px;padding:11px 0;border-top:1px solid var(--rule);font-size:13px;color:var(--muted)}.optimizer-steps li:before{content:counter(opt);width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:var(--paper-2);color:var(--magenta);font-family:"JetBrains Mono",monospace;font-size:11px}.optimizer-steps strong{color:var(--ink)}.cadence-compare{display:grid;gap:24px}.cadence-case{display:grid;grid-template-columns:180px minmax(0,1fr);gap:18px;align-items:start}.cadence-case>div:first-child b{display:block;font-family:"JetBrains Mono",monospace;font-size:12px}.cadence-case>div:first-child span{display:block;margin-top:5px;color:var(--muted);font-size:12px}.cadence-track{display:flex;align-items:stretch;gap:4px;min-width:560px}.cadence-block{flex:var(--duration);min-width:92px;padding:13px 8px;border:1px solid #f9a8d4;background:#fdf2f8;color:#9d174d;font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center}.cadence-block.steady{border-color:#86efac;background:#ecfdf5;color:#166534}.cadence-block em{display:block;margin-top:4px;font-family:"IBM Plex Sans",sans-serif;font-size:11px;font-style:normal}.deep-boundaries{margin-top:26px;border-top:1px solid var(--ink)}.deep-boundary{display:grid;grid-template-columns:160px minmax(0,1fr);gap:20px;padding:14px 0;border-bottom:1px solid var(--rule)}.deep-boundary b{font-size:13px}.deep-boundary p{margin:0;color:var(--muted);font-size:13px}
+    @media(max-width:900px){.hero-aside{grid-template-columns:1fr}.hero-aside p+p{border-left:0;border-top:1px solid var(--rule);padding:18px 0 0}.hero-aside p{padding-right:0}}
+    @media(max-width:900px){.invariant-deck,.context-pp,.optimizer-path,.paper-grid{grid-template-columns:1fr}.invariant-card summary{min-height:auto}.impact-table{display:block;max-width:calc(100vw - 28px);overflow:auto}.paper-card img,.paper-card.tall img{height:auto;max-height:560px}.policy-contract{grid-template-columns:1fr 1fr}.policy-contract>section:nth-child(3){padding-left:0;border-left:0;border-top:1px solid var(--rule)}.policy-contract>section:nth-child(4){border-top:1px solid var(--rule)}}
+    @media(max-width:760px){.roofline-pair,.roofline-reading,.bottleneck-rule,.latency-callout,.parallel-brief,.mm-guardrails,.mm-frameworks{grid-template-columns:1fr}.mm-flow{grid-template-columns:1fr}.mm-arrow{transform:rotate(90deg)}.pp-math{grid-template-columns:1fr}.pp-math code{white-space:normal}.proof-row,.mixed-schedule,.resource-line,.cadence-case,.deep-boundary,.metric-reading,.policy-detail-head,.policy-trace{grid-template-columns:1fr;gap:5px}.mix-divider{grid-column:1}.mix-label{margin-top:10px}.reference-caption{display:block}.reference-caption span{display:block;margin-top:6px}.deep-formula code{white-space:normal}.operating-control{grid-template-columns:1fr}.operating-control output{text-align:left}.policy-contract{grid-template-columns:1fr}.policy-contract>section+section{padding-left:0;border-left:0;border-top:1px solid var(--rule)}}
+    @media(max-width:900px){.live-head{display:block}.live-legend{justify-content:flex-start;margin-top:12px}.live-cycle{grid-template-columns:repeat(4,1fr)}}
+    @media(max-width:760px){.additional-reading>summary{grid-template-columns:1fr auto;gap:6px 12px}.additional-tag{grid-column:1}.additional-reading>summary b{grid-column:1/-1;grid-row:2}.additional-hint{grid-column:1/-1}.additional-reading>summary:after{grid-column:2;grid-row:1}.paper-reading,.policy-budget-note{grid-template-columns:1fr;gap:5px}.live-explain{grid-template-columns:1fr;gap:5px}.live-cycle{grid-template-columns:1fr 1fr}}
+    @media(prefers-reduced-motion:reduce){.pp-details.is-playing .pp-cell.work,.pp-details.is-playing .pp-cell.bubble{animation:none!important}.op-fill{transition:none}.arch-edge{animation:none}.arch-particle{display:none}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">CHUNKED <span>PREFILL</span></div>
+      <nav aria-label="Article Chapters">
+        <a href="#why">01 Why It Matters</a><a href="#mechanism">02 Core Mechanism</a><a href="#tradeoffs">03 Impact &amp; Limits</a><a href="#design">04 Design &amp; Implementation</a><a href="#sglang">05 SGLang</a><a href="#vllm">06 vLLM</a><a href="#evaluation">07 Performance Evidence</a>
+      </nav><a href="index.html" aria-label="language switch" style="flex:0 0 auto;margin-left:4px;padding:10px 9px;border-left:1px solid var(--rule);color:var(--muted);font:600 11px/1 "JetBrains Mono",monospace;letter-spacing:.06em;text-decoration:none">中文</a>
+    </div>
+  </header>
+
+  <main>
+    <header class="hero">
+      <div class="hero-copy">
+        <h1>Chunked Prefill: Turn Long Prompts into <em>Schedulable</em> Work</h1>
+        <p>Chunked Prefill is not a new attention mechanism, nor does it split the model context. Its job is simpler: instead of forcing a long prefill to finish in one shot, it returns control to the scheduler at safe boundaries.</p>
+      </div>
+      <aside class="hero-aside">
+        <p><strong>What this article explains</strong>Why long prompts interfere with online decode; why chunking preserves model semantics; which workloads benefit and which pay overhead; and how SGLang represents the relevant state, budgets, and parameters.</p>
+        <p><strong>Intended audience</strong>Infrastructure engineers familiar with Transformers and KV caches who care about TTFT, ITL, throughput, GPU memory, and scheduler implementation.</p>
+        <p><strong>Code baselines</strong>SGLang <span class="mono">c19dc43</span> · vLLM <span class="mono">4edb551</span>; verified on 2026-09-22.</p>
+      </aside>
+    </header>
+    <p class="hero-thesis">The key idea: Chunked Prefill does not reduce the total work. It controls how frequently the system regains an opportunity to schedule something else.</p>
+
+    <section class="section" id="why">
+      <header class="section-head">
+        <span class="section-index">01 / WHY</span>
+        <h2>Why Chunked Prefill Exists</h2>
+        <p class="lead">The problem is not simply that long prompts are slow. Prefill and decode stress the GPU in different ways, while an online scheduler must protect both time to first token for new requests and streaming latency for active requests.</p>
+      </header>
+      <div class="prose">
+        <h3>1. Prefill and Decode stress different hardware bottlenecks</h3>
+        <p><strong>Prefill</strong> processes many prompt tokens at once. In a linear layer, the input can be viewed as  <code>[L, H]</code>, where  <code>L</code> is the number of Prompt tokens in this round,<code>H</code> is the hidden size. Multiplying it by the weight matrix produces a large GEMM. As  <code>L</code>  grows, more tokens reuse the same weights and GEMM arithmetic intensity rises. Meanwhile, self-attention compute grows approximately quadratically with sequence length:  <code>L²</code>  . Past the hardware roofline crossover, prefill usually shifts from underutilizing compute units toward being  <strong>compute-bound</strong>.</p>
+        <p><strong>Decode</strong> generates roughly one token per sequence per iteration. At small batch sizes, linear layers resemble GEMV or very thin GEMMs: little math is performed even though large model weights must be read, while attention also reads the entire previous KV cache. As context length  <code>S</code>  grows, each new token reads more KV. Decode therefore tends to hit HBM bandwidth first and remain  <strong>memory / I/O-bound</strong>.<sup><a href="#ref-sarathi">[1]</a></sup></p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Two Rooflines: inspect Prefill and Decode separately</strong><span>Conceptual log–log plots; positions show trends, not measurements from a specific GPU</span></div>
+        <div class="roofline-pair">
+          <section class="roofline-panel">
+            <div class="roofline-panel-head"><b>Prefill: increase tokens in this iteration</b><span>L ↑</span></div>
+            <div class="roofline-scroll"><svg class="roofline-svg" viewBox="0 0 520 420" role="img" aria-labelledby="prefill-roof-en-title prefill-roof-en-desc">
+              <title id="prefill-roof-en-title">Prefill Roofline model</title>
+              <desc id="prefill-roof-en-desc">As the number of Prefill tokens per iteration grows, weight reuse and arithmetic intensity rise. The operating point moves up and right and may cross the ridge point toward the compute ceiling.</desc>
+              <defs><marker id="prefill-axis-arrow-en" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#64748b"/></marker><marker id="prefill-path-arrow-en" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#0369a1"/></marker></defs>
+              <path class="roof-zone-memory" d="M72 348L308 112V348Z"/><rect class="roof-zone-compute" x="308" y="112" width="188" height="236"/>
+              <line class="roof-grid" x1="72" y1="268" x2="496" y2="268"/><line class="roof-grid" x1="72" y1="188" x2="496" y2="188"/><line class="roof-grid" x1="72" y1="112" x2="496" y2="112"/><line class="roof-grid" x1="180" y1="56" x2="180" y2="348"/><line class="roof-grid" x1="308" y1="56" x2="308" y2="348"/><line class="roof-grid" x1="420" y1="56" x2="420" y2="348"/>
+              <line class="roof-axis" x1="72" y1="348" x2="508" y2="348" marker-end="url(#prefill-axis-arrow-en)"/><line class="roof-axis" x1="72" y1="348" x2="72" y2="40" marker-end="url(#prefill-axis-arrow-en)"/><path class="roof-ceiling" d="M72 348L308 112H496"/><circle class="roof-knee" cx="308" cy="112" r="6"/>
+              <text class="roof-region" x="100" y="76">MEMORY-BOUND</text><text class="roof-region" x="344" y="76">COMPUTE-BOUND</text><text class="roof-tick" x="316" y="132">ridge point</text>
+              <polyline class="roof-prefill-path" points="168,252 252,168 368,112" marker-end="url(#prefill-path-arrow-en)"/><circle class="roof-point prefill" cx="168" cy="252" r="6"/><circle class="roof-point prefill" cx="252" cy="168" r="6"/><circle class="roof-point prefill" cx="368" cy="112" r="6"/>
+              <text class="roof-point-label" x="152" y="276">L=256</text><text class="roof-point-label" x="224" y="156">L=2K</text><text class="roof-point-label" x="360" y="140">L=8K</text>
+              <text class="roof-note" x="108" y="316">More queries reuse each weight read → intensity moves right</text>
+              <text class="roof-axis-label" x="284" y="388" text-anchor="middle">Arithmetic intensity · FLOP/byte (log)</text><text class="roof-axis-label" x="24" y="204" text-anchor="middle" transform="rotate(-90 24 204)">Attainable throughput · FLOP/s (log)</text>
+            </svg></div>
+          </section>
+          <section class="roofline-panel">
+            <div class="roofline-panel-head"><b>Decode: increase context length</b><span>S ↑ · small batch</span></div>
+            <div class="roofline-scroll"><svg class="roofline-svg" viewBox="0 0 520 420" role="img" aria-labelledby="decode-roof-en-title decode-roof-en-desc">
+              <title id="decode-roof-en-title">Decode Roofline model</title>
+              <desc id="decode-roof-en-desc">Small-batch Decode sits in the low-arithmetic-intensity bandwidth-bound region. Longer context mostly increases KV bytes and latency per token. The point moves right only when batching or parallel tokens add reuse.</desc>
+              <defs><marker id="decode-axis-arrow-en" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#64748b"/></marker><marker id="decode-path-arrow-en" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#6d28d9"/></marker></defs>
+              <path class="roof-zone-memory" d="M72 348L308 112V348Z"/><rect class="roof-zone-compute" x="308" y="112" width="188" height="236"/>
+              <line class="roof-grid" x1="72" y1="268" x2="496" y2="268"/><line class="roof-grid" x1="72" y1="188" x2="496" y2="188"/><line class="roof-grid" x1="72" y1="112" x2="496" y2="112"/><line class="roof-grid" x1="180" y1="56" x2="180" y2="348"/><line class="roof-grid" x1="308" y1="56" x2="308" y2="348"/><line class="roof-grid" x1="420" y1="56" x2="420" y2="348"/>
+              <line class="roof-axis" x1="72" y1="348" x2="508" y2="348" marker-end="url(#decode-axis-arrow-en)"/><line class="roof-axis" x1="72" y1="348" x2="72" y2="40" marker-end="url(#decode-axis-arrow-en)"/><path class="roof-ceiling" d="M72 348L308 112H496"/><circle class="roof-knee" cx="308" cy="112" r="6"/>
+              <text class="roof-region" x="100" y="76">MEMORY-BOUND</text><text class="roof-region" x="344" y="76">COMPUTE-BOUND</text><text class="roof-tick" x="316" y="132">ridge point</text>
+              <circle class="roof-point decode" cx="140" cy="280" r="7"/><text class="roof-point-label" x="156" y="304">Decode · small batch</text>
+              <line class="roof-decode-path" x1="152" y1="272" x2="264" y2="160" marker-end="url(#decode-path-arrow-en)"/><text class="roof-note" x="180" y="236">batch / parallel tokens ↑</text><text class="roof-note" x="180" y="252">→ reuse ↑ → moves right</text>
+              <rect class="roof-callout" x="304" y="212" width="172" height="76" rx="6"/><text class="roof-point-label" x="320" y="236">Context S ↑</text><text class="roof-note" x="320" y="256">KV bytes / token ↑</text><text class="roof-note" x="320" y="272">ITL ↑; still bandwidth-bound</text>
+              <text class="roof-axis-label" x="284" y="388" text-anchor="middle">Arithmetic intensity · FLOP/byte (log)</text><text class="roof-axis-label" x="24" y="204" text-anchor="middle" transform="rotate(-90 24 204)">Attainable throughput · FLOP/s (log)</text>
+            </svg></div>
+          </section>
+        </div>
+        <div class="roofline-reading">
+          <div class="prefill-read"><b>PREFILL · INCREASING L</b><p>More queries share each weight read, so arithmetic intensity rises. Beyond the ridge point, adding tokens mainly adds compute and performance approaches the peak-FLOP/s ceiling.</p></div>
+          <div class="decode-read"><b>DECODE · INCREASING S</b><p>At small batch sizes, longer context primarily adds KV bytes and latency per output token; it does not automatically raise arithmetic intensity. Decode moves right only when larger batches or more parallel tokens create enough reuse.</p></div>
+        </div>
+        <p class="figure-note">This is a mechanism diagram, not a benchmark. The actual ridge point and workload paths depend on model architecture, batch shape, precision, kernels, peak GPU compute, and HBM bandwidth.</p>
+      </figure>
+
+      <div class="prose">
+        <div class="equation"><strong>Approximate KV bytes read per generated token</strong><br>2 × N<sub>layers</sub> × S × N<sub>kv_heads</sub> × d<sub>head</sub> × bytes<sub>element</sub><small>The factor of 2 accounts for K and V. This approximation ignores cache hierarchy, paging, and kernel fusion; it only shows why traffic grows linearly with context length S.</small></div>
+        <div class="bottleneck-rule">
+          <div><b>“More tokens” means different things in the two phases</b><p>In prefill, more tokens means more queries computed in parallel. In decode, a longer context mainly increases the KV history read by each query.</p></div>
+          <div><b>Longer contexts by themselves do not make Decode automatically compute-bound</b><p>It usually makes Decode more bandwidth limited. Common variables that make Decode tend to be compute-bound are larger batches, more parallel tokens, or kernels that significantly increase data reuse.</p></div>
+        </div>
+
+        <h3>2. TTFT versus ITL: competing goals on one GPU</h3>
+        <p><strong>TTFT (Time to First Token)</strong> measures the delay from request arrival to its first output token; <strong>ITL (Inter-Token Latency)</strong> measures the gap between adjacent streamed tokens. Running a new request's full Prefill earlier improves its TTFT, but the same long forward pass delays the next Decode step for active requests and can create ITL spikes.</p>
+        <p>The real concern is not only average ITL, but its <strong>variance and tail</strong>. Users notice sudden pauses in a stream even when average tokens/s barely changes. Yet always prioritizing Decode leaves newly arrived long prompts queued and worsens TTFT. The scheduler must balance both.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>A full prefill stretches the decode cadence</strong><span>The grid shows ordering, not scale; actual forward duration depends on the model, token count, and hardware.</span></div>
+        <div class="scroll"><div class="latency-timeline">
+          <div class="cell axis">TIME</div><div class="cell axis">t0</div><div class="cell axis">t1</div><div class="cell axis">t2</div><div class="cell axis">t3</div><div class="cell axis">t4</div><div class="cell axis">t5</div><div class="cell axis">t6</div><div class="cell axis">t7</div>
+          <div class="cell label">A · streaming</div><div class="cell decode">D₀</div><div class="cell itl-gap">WAIT</div><div class="cell itl-gap">WAIT</div><div class="cell itl-gap">WAIT</div><div class="cell decode">D₁</div><div class="cell decode">D₂</div><div class="cell decode">D₃</div><div class="cell decode">D₄</div>
+          <div class="cell label">B · long prompt</div><div class="cell wait">ARRIVE</div><div class="cell prefill">PREFILL</div><div class="cell prefill">same forward</div><div class="cell prefill">same forward</div><div class="cell ttft">FIRST TOKEN</div><div class="cell decode">D₁</div><div class="cell decode">D₂</div><div class="cell decode">D₃</div>
+          <div class="cell label">GPU decision</div><div class="cell done">SCHEDULE</div><div class="cell stall">NO RE-SCHEDULE</div><div class="cell stall">NO RE-SCHEDULE</div><div class="cell stall">NO RE-SCHEDULE</div><div class="cell done">SCHEDULE</div><div class="cell done">SCHEDULE</div><div class="cell done">SCHEDULE</div><div class="cell done">SCHEDULE</div>
+        </div></div>
+        <div class="latency-callout">
+          <div><b>Prioritize request B’s prefill</b><p>B receives its first token earlier, improving TTFT; A’s D₀→D₁ interval stretches into a visible ITL spike.</p></div>
+          <div><b>Always prioritize request A’s decode</b><p>A keeps a stable streaming cadence, but B remains queued and its TTFT continues to grow.</p></div>
+        </div>
+        <p class="figure-note">Chunked Prefill targets this non-preemptible window. It prevents the scheduler from having to choose between one entire prefill and all pending decode work at once.</p>
+      </figure>
+
+      <details class="additional-reading prose">
+        <summary><span class="additional-tag">ADDITIONAL READING</span><b>Background: TP is communication-bound; PP is bubble-bound</b><span class="additional-hint">Supplementary background on multi-GPU deployment and pipeline bubbles</span></summary>
+        <div class="additional-body">
+        <p>When a model does not fit on one GPU, Tensor Parallelism (TP) and Pipeline Parallelism (PP) distribute it across multiple GPUs. Their bottlenecks differ, which determines where Chunked Prefill can help.</p>
+        <div class="parallel-brief">
+          <div><h4>Tensor Parallelism</h4><p>TP shards each layer’s matrices across GPUs. Nearly every layer requires an All-Reduce, Reduce-Scatter, or All-Gather, so performance is sensitive to inter-GPU bandwidth and collective latency. Larger TP degrees make communication more likely to dominate the critical path.</p></div>
+          <div><h4>Pipeline Parallelism</h4><p>PP assigns different layers to different stages and transfers activations only at stage boundaries. A stage must still wait for its upstream microbatch; pipeline fill, drain, and stage-time imbalance create bubbles in which a GPU is ready but has no work.</p></div>
+        </div>
+
+        <details class="pp-details">
+          <summary>Expand: how pipeline bubbles form</summary>
+          <div class="pp-body">
+            <div class="scroll"><div class="pp-grid" aria-label="Timing diagram of four-stage pipeline processing three microbatches">
+              <div class="pp-cell axis">STAGE</div><div class="pp-cell axis">t0</div><div class="pp-cell axis">t1</div><div class="pp-cell axis">t2</div><div class="pp-cell axis">t3</div><div class="pp-cell axis">t4</div><div class="pp-cell axis">t5</div>
+              <div class="pp-cell stage">GPU 0</div><div class="pp-cell work" style="--order:1">M0</div><div class="pp-cell work" style="--order:2">M1</div><div class="pp-cell work" style="--order:3">M2</div><div class="pp-cell bubble" style="--order:4">BUBBLE</div><div class="pp-cell bubble" style="--order:5">BUBBLE</div><div class="pp-cell bubble" style="--order:6">BUBBLE</div>
+              <div class="pp-cell stage">GPU 1</div><div class="pp-cell bubble" style="--order:1">WAIT</div><div class="pp-cell work" style="--order:2">M0</div><div class="pp-cell work" style="--order:3">M1</div><div class="pp-cell work" style="--order:4">M2</div><div class="pp-cell bubble" style="--order:5">BUBBLE</div><div class="pp-cell bubble" style="--order:6">BUBBLE</div>
+              <div class="pp-cell stage">GPU 2</div><div class="pp-cell bubble" style="--order:1">WAIT</div><div class="pp-cell bubble" style="--order:2">WAIT</div><div class="pp-cell work" style="--order:3">M0</div><div class="pp-cell work" style="--order:4">M1</div><div class="pp-cell work" style="--order:5">M2</div><div class="pp-cell bubble" style="--order:6">BUBBLE</div>
+              <div class="pp-cell stage">GPU 3</div><div class="pp-cell bubble" style="--order:1">WAIT</div><div class="pp-cell bubble" style="--order:2">WAIT</div><div class="pp-cell bubble" style="--order:3">WAIT</div><div class="pp-cell work" style="--order:4">M0</div><div class="pp-cell work" style="--order:5">M1</div><div class="pp-cell work" style="--order:6">M2</div>
+            </div></div>
+            <div class="pp-math"><span>The green diagonal shows a microbatch advancing through the stages; gray cells are fill and drain bubbles. Too few microbatches—or large differences in their duration—increase idle time.</span><code>Idealized utilization ≈ m / (m + p − 1)<br>m=3, p=4 → 50%</code></div>
+            <p class="figure-note">More, more-uniform microbatches can reduce bubbles, at the cost of additional scheduling and communication overhead. Later we will see how Chunked Prefill turns a very long prefill into more regular work units. It reduces only part of the bubble; it cannot eliminate fill/drain, communication, or an imbalanced stage partition.</p>
+          </div>
+        </details>
+        </div>
+      </details>
+    </section>
+
+    <section class="section" id="mechanism">
+      <header class="section-head">
+        <span class="section-index">02 / CORE MECHANISM</span>
+        <h2>How Chunked Prefill Works</h2>
+        <p class="lead">The mechanism has three layers: split prefill into resumable chunks; combine chunks with decode work in mixed batches; then shape chunks around long-context cost and the PP stage cadence.</p>
+      </header>
+      <div class="prose">
+        <h3>1. Split a full prefill into smaller chunks</h3>
+        <p>Let the prompt length be <code>L</code> and the per-request chunk cap be <code>C</code>. Without chunking, the Scheduler submits <code>[0,L)</code> once. With chunking, it submits <code>[0,C)</code>, <code>[C,2C)</code>, and so on until the prompt is complete. The request therefore needs roughly <code>ceil(L/C)</code> Prefill iterations.</p>
+        <p>This does not turn one message into unrelated prompts. After the first chunk, its K/V is stored in the KV cache. The next chunk computes Q/K/V only for new tokens, while each new query can still attend to the entire legal prefix. Intermediate chunks are not sampled; normal Decode starts only after all prompt tokens have been processed.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Drag Chunk Size to see how one 16-token message spans a different number of scheduler iterations</strong><span>The control limits newly computed tokens per iteration; it does not change the prompt length.</span></div>
+        <div class="chunk-lab">
+          <div class="chunk-controls"><label for="chunk-size">Chunk Size</label><input id="chunk-size" type="range" min="1" max="4" step="1" value="2" aria-label="Select Chunk Size"><output id="chunk-output">4 tokens / chunk</output></div>
+          <div class="scroll"><div class="token-strip" id="token-strip" aria-label="Sixteen Prompt tokens grouped by chunk size">
+            <span class="token chunk-even boundary">T0</span><span class="token chunk-even">T1</span><span class="token chunk-even">T2</span><span class="token chunk-even">T3</span><span class="token chunk-odd boundary">T4</span><span class="token chunk-odd">T5</span><span class="token chunk-odd">T6</span><span class="token chunk-odd">T7</span><span class="token chunk-even boundary">T8</span><span class="token chunk-even">T9</span><span class="token chunk-even">T10</span><span class="token chunk-even">T11</span><span class="token chunk-odd boundary">T12</span><span class="token chunk-odd">T13</span><span class="token chunk-odd">T14</span><span class="token chunk-odd">T15</span>
+          </div></div>
+          <div class="chunk-summary"><div><b>Required prefill rounds</b><span id="chunk-rounds">4 rounds</span></div><div><b>Scheduler decision points</b><span id="chunk-boundaries">3 internal boundaries</span></div><div><b>Current bias</b><span id="chunk-bias">Tradeoff between latency isolation and efficiency</span></div></div>
+        </div>
+        <p class="figure-note" id="chunk-explanation">C=4: Process up to 4 new tokens per round; each boundary allows the Scheduler to re-evaluate Decode, waiting queue, budget and KV.</p>
+      </figure>
+
+      <div class="prose">
+        <h3>Why chunking preserves model semantics</h3>
+        <p>Consider the second chunk, <code>T4…T7</code>. It generates queries for only four new tokens, but each query's Key/Value visibility still follows its original global position. Q7 can read K0…K7, not merely K4…K7. Three invariants preserve equivalence with a one-shot Prefill.</p>
+      </div>
+
+      <div class="wide invariant-deck" aria-label="Three correctness invariants of chunk boundaries">
+        <details class="invariant-card">
+          <summary>
+            <span class="invariant-title"><b>KV is appended continuously</b><span>Open example</span></span>
+            <p class="invariant-summary">The second round does not recalculate T0–T3; it reads the historical KV and appends the new KV from T4–T7.</p>
+            <span class="mini-proof" aria-hidden="true"><span class="history">KV 0–3</span><span class="cut">→</span><span class="current">KV 4–7</span></span>
+          </summary>
+          <div class="invariant-detail">
+            <p>Assume <code>chunk_size=4</code>. Physical KV pages can be dispersed, but the logical token order cannot be changed.</p>
+            <div class="proof-row"><b>ITERATION 1</b><div class="proof-tokens"><span class="current">Write KV0</span><span class="current">Write KV1</span><span class="current">Write KV2</span><span class="current">Write KV3</span></div></div>
+            <div class="proof-row"><b>ITERATION 2</b><div class="proof-tokens"><span class="history">Read KV0</span><span class="history">Read KV1</span><span class="history">Read KV2</span><span class="history">Read KV3</span><span class="current">Write KV4</span><span class="current">Write KV5</span><span class="current">Write KV6</span><span class="current">Write KV7</span></div></div>
+            <p><strong>Check:</strong> after the second iteration, the logical cache covers <code>KV[0:8)</code>. It was built across two iterations, but still represents one sequence.</p>
+          </div>
+        </details>
+
+        <details class="invariant-card">
+          <summary>
+            <span class="invariant-title"><b>Positions do not reset</b><span>Open example</span></span>
+            <p class="invariant-summary">Chunks are just execution boundaries. T4 for the second round is still at global position 4, rather than starting over at position 0.</p>
+            <span class="mini-proof" aria-hidden="true"><span class="history">0 1 2 3</span><span class="cut">|</span><span class="current">4 5 6 7</span></span>
+          </summary>
+          <div class="invariant-detail">
+            <p>RoPE or other position encoding must see the original sequence position, otherwise the second chunk will be mistaken for a new prompt.</p>
+            <div class="proof-row"><b>Correct</b><div class="proof-tokens"><span class="history">T0·p0</span><span class="history">T1·p1</span><span class="history">T2·p2</span><span class="history">T3·p3</span><span class="current">T4·p4</span><span class="current">T5·p5</span><span class="current">T6·p6</span><span class="current">T7·p7</span></div></div>
+            <div class="proof-row"><b>Incorrect reset</b><div class="proof-tokens"><span class="wrong">T4·p0</span><span class="wrong">T5·p1</span><span class="wrong">T6·p2</span><span class="wrong">T7·p3</span></div></div>
+            <p><strong>Check:</strong> the starting position equals the number of prompt tokens already processed; here, <code>prefix_len=4</code>.</p>
+          </div>
+        </details>
+
+        <details class="invariant-card">
+          <summary>
+            <span class="invariant-title"><b>The causal mask does not stop at chunk boundaries</b><span>Open example</span></span>
+            <p class="invariant-summary">The second round of Query can not only read this chunk, but also read all legal history on the left side of the boundary.</p>
+            <span class="mini-proof" aria-hidden="true"><span class="history">K0…K3</span><span class="cut">+</span><span class="current">K4…Ki</span></span>
+          </summary>
+          <div class="invariant-detail">
+            <p>For a query at global position <code>i</code>, the rule remains: it may read keys satisfying <code>j ≤ i</code>. The chunk boundary introduces no new attention mask.</p>
+            <div class="proof-row"><b>Q4 can read</b><div class="proof-tokens"><span class="history">K0</span><span class="history">K1</span><span class="history">K2</span><span class="history">K3</span><span class="current">K4</span><span class="masked">K5</span><span class="masked">K6</span><span class="masked">K7</span></div></div>
+            <div class="proof-row"><b>Q7 can read</b><div class="proof-tokens"><span class="history">K0</span><span class="history">K1</span><span class="history">K2</span><span class="history">K3</span><span class="current">K4</span><span class="current">K5</span><span class="current">K6</span><span class="current">K7</span></div></div>
+            <p><strong>Check:</strong> Q7 can see K0–K7, not just K4–K7; KVs belonging to other sequences remain invisible.</p>
+          </div>
+        </details>
+      </div>
+      <div class="invariant-conclusion"><strong>Correctness conclusion:</strong> as long as KV state, global positions, and causal visibility match a one-shot Prefill, chunking does not change the model's dependency graph. Different kernels or floating-point reduction orders may still produce small, non-bitwise-identical numerical differences.</div>
+
+      <div class="prose">
+        <h3>2. Mixed batching: put decode and prefill chunks in one forward pass</h3>
+        <p>Chunking alone only creates more scheduling boundaries. The scheduler can insert a decode-only iteration between two chunks—interleaving—or go further and place decode tokens from running requests together with a waiting request’s prefill chunk in <strong>the same batch and the same model forward pass</strong>. That is mixed batching.</p>
+        <p>A common decode-first policy reserves one Decode token for each running request, then fills the remaining token budget with one or more Prefill chunks. Prefill continues to advance without forcing streaming requests to wait behind a full-prompt forward pass.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>This figure shows chunking and interleaving; it does not show the internal composition of a mixed batch.</strong><span>NVIDIA calls this a simplified representation of the chunked prefill process</span></div>
+        <a class="reference-image-link" href="https://developer-blogs.nvidia.com/wp-content/uploads/2024/11/Chunked-Prefill-Process.png" target="_blank" rel="noopener">
+          <img class="reference-image" src="https://developer-blogs.nvidia.com/wp-content/uploads/2024/11/Chunked-Prefill-Process.png" width="2001" height="1119" loading="lazy" decoding="async" alt="TensorRT-LLM Chunked Prefill before and after comparison. The complete Prefill in the first half causes other requests to wait, while the Prefill in the second half is cut into multiple chunks so that Prefill and Decode for different requests can be advanced in an interleaved manner.">
+        </a>
+        <figcaption class="reference-caption"><span>It shows that chunking shortens the interval during which the scheduler cannot intervene, making prefill and decode work from different requests easier to interleave. The timeline alone does not tell us which tokens share one forward pass.</span><span><a href="https://developer.nvidia.com/blog/streamlining-ai-inference-performance-and-deployment-with-nvidia-tensorrt-llm-chunked-prefill/" target="_blank" rel="noopener">Source: NVIDIA Technical Blog</a></span></figcaption>
+      </figure>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>The defining feature of mixed batching: decode and prefill tokens share one forward pass</strong><span>Each row is one forward pass; each cell is one token slot in that pass.</span></div>
+        <div class="scroll"><div class="mixed-schedule">
+          <div class="mix-label"><b>Non-mixed · Round 1</b>Prefill-only forward</div><div class="mix-slots"><span class="mix-slot prefill">P₀</span><span class="mix-slot prefill">P₁</span><span class="mix-slot prefill">P₂</span><span class="mix-slot prefill">P₃</span><span class="mix-slot prefill">P₄</span><span class="mix-slot prefill">P₅</span><span class="mix-slot prefill">P₆</span><span class="mix-slot prefill">P₇</span></div>
+          <div class="mix-label"><b>Non-mixed · Round 2</b>Decode-only forward</div><div class="mix-slots"><span class="mix-slot decode">A·D</span><span class="mix-slot decode">B·D</span><span class="mix-slot decode">C·D</span><span class="mix-slot empty">idle</span><span class="mix-slot empty">idle</span><span class="mix-slot empty">idle</span><span class="mix-slot empty">idle</span><span class="mix-slot empty">idle</span></div>
+          <div class="mix-divider"></div>
+          <div class="mix-label"><b>Mixed · Round 1</b>one forward</div><div class="mix-slots"><span class="mix-slot decode">A·D</span><span class="mix-slot decode">B·D</span><span class="mix-slot decode">C·D</span><span class="mix-slot prefill">P₀</span><span class="mix-slot prefill">P₁</span><span class="mix-slot prefill">P₂</span><span class="mix-slot prefill">P₃</span><span class="mix-slot prefill">P₄</span></div>
+          <div class="mix-label"><b>Mixed · Round 2</b>one forward</div><div class="mix-slots"><span class="mix-slot decode">A·D</span><span class="mix-slot decode">B·D</span><span class="mix-slot decode">C·D</span><span class="mix-slot prefill">P₅</span><span class="mix-slot prefill">P₆</span><span class="mix-slot prefill">P₇</span><span class="mix-slot prefill">P₈</span><span class="mix-slot prefill">P₉</span></div>
+        </div></div>
+        <div class="mix-legend"><span class="decode-key">Decode token</span><span class="prefill-key">Prefill token</span><span class="wait-key">Two types of tokens in the same line belong to the same forward</span></div>
+        <p class="figure-note">The upper half uses chunks but still runs prefill and decode in separate iterations. The lower half is mixed batching: latency-sensitive decode tokens are placed first, then the remaining token budget is filled with a prefill chunk.</p>
+      </figure>
+
+      <div class="prose">
+        <div class="scheduler-rule"><code>one forward = {Decode tokens} ∪ {Prefill chunk tokens}</code><p>This is the precise meaning of mixed batching. A common decode-priority policy places running decode work first, then fills the remaining token budget with prefill chunks. A production scheduler must also check KV capacity, priority, CUDA Graph coverage, and feature compatibility.</p></div>
+        <div class="mix-economics">
+          <h4>Why mixing can improve GPU efficiency</h4>
+          <p>The two workloads place complementary pressure on the hardware. Mixed batching can reduce queuing and may also raise the effective arithmetic intensity of the combined forward pass.</p>
+          <div class="resource-line"><b>Prefill chunk</b><code>compute-heavy</code><p>Many queries run in parallel, weights are reused across tokens, and larger GEMMs utilize Tensor Cores more effectively.</p></div>
+          <div class="resource-line"><b>Decode tokens</b><code>memory-heavy</code><p>Each sequence contributes only one query per decode iteration. At small batch sizes, compute utilization is low while the cost of reading model weights and a long KV history dominates.</p></div>
+          <div class="resource-line mixed"><b>Mixed forward</b><code>better balance</code><p>Combining latency-sensitive decode tokens with a compute-dense prefill chunk lets shared linear layers run on a larger token batch and amortize weight reads. Within a suitable range, adding decode tokens can have modest incremental cost.<sup><a href="#ref-sarathi">[1]</a></sup></p></div>
+          <p class="figure-note"><strong>This does not literally mean “compute and I/O run at the same time.”</strong> The framework unifies token metadata and can merge linear layers into larger GEMMs, while Prefill attention and Decode attention may still use different kernels. The gain depends on kernel support, batch shape, KV access, and graph capture.</p>
+        </div>
+      </div>
+
+      <div class="prose">
+        <table class="compare-table"><thead><tr><th>execution mode</th><th>Contents of one forward pass</th><th>What it addresses</th></tr></thead><tbody>
+          <tr><td>Full Prefill</td><td>Entire Prompt Prefill.</td><td>The path is simple, but the rescheduling window is the longest.</td></tr>
+          <tr><td>Chunked, non-mixed</td><td>Only Prefill chunk, or only Decode.</td><td>Decode can be inserted at chunk boundaries, but will still wait during each Prefill forward.</td></tr>
+          <tr><td>Chunked + mixed</td><td>Decode token coexists with Prefill chunk.</td><td>Use the remaining token budget to continue advancing Prefill while protecting Decode cadence.</td></tr>
+        </tbody></table>
+        <div class="aside accent"><strong>Do not conflate chunking with mixed batching</strong>Chunking determines how soon control returns to the Scheduler. Mixed batching determines whether Prefill and Decode execute together in the next iteration. Enabling chunking does not automatically enable mixed batching.</div>
+      </div>
+
+      <div class="prose">
+        <h3>3. Multimodal: how image and video tokens enter Chunked Prefill</h3>
+        <p>A multimodal request does not feed JPEG pixels or an entire video directly into the LLM. Images are typically resized or tiled, videos are frame-sampled, and a vision encoder produces visual features. The processor then expands a prompt placeholder into a span of visual embeddings. <strong>Ordinary Chunked Prefill partitions the expanded LLM-side token/embedding sequence—not raw pixels or video frames, and not automatically the vision encoder.</strong></p>
+        <p>There are therefore at least three granularities: media preprocessing, vision-encoder item/cache management, and the LLM Prefill token budget. Image resolution and tile count—or sampled video frames multiplied by visual tokens per frame—can turn a short-looking text prompt into a long Prefill. Video is especially likely to create a burst of visual tokens.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Where chunking happens: encode media first, then schedule the LLM-side sequence</strong><span>Numbers are illustrative; actual visual-token counts depend on the model and processor</span></div>
+        <div class="mm-flow">
+          <div class="mm-stage"><b>1 · RAW MEDIA</b><span>An image or a video clip</span></div><div class="mm-arrow">→</div>
+          <div class="mm-stage"><b>2 · PREPROCESS</b><span>resize / tile; sample frames</span></div><div class="mm-arrow">→</div>
+          <div class="mm-stage"><b>3 · VISION ENCODER</b><span>produce and cache visual features</span></div><div class="mm-arrow">→</div>
+          <div class="mm-stage"><b>4 · LLM PREFILL</b><span>text tokens + expanded visual embedding span</span></div>
+        </div>
+        <div class="mm-sequence" aria-label="A multimodal prompt made of text, one image span, and more text, totaling 2496 LLM-side positions">
+          <div class="mm-segment text"><b>Text · 128</b>“Compare…”</div>
+          <div class="mm-segment visual"><b>Image span · 2304</b>Expanded placeholder carrying embeddings, offsets, and position metadata</div>
+          <div class="mm-segment text"><b>Text · 64</b>question suffix</div>
+        </div>
+        <div class="mm-cuts"><div class="mm-cut" style="flex:1">Chunk 1 · [0, 1024)</div><div class="mm-cut" style="flex:1">Chunk 2 · [1024, 2048)</div><div class="mm-cut" style="flex:.44">Chunk 3 · [2048, 2496)</div></div>
+        <div class="mm-guardrails">
+          <div><b>SPAN ALIGNMENT</b><p>The chunk range must map to the correct visual-embedding slice. If a backend cannot split one visual item, the iteration must stop at the item's start.</p></div>
+          <div><b>POSITION &amp; MASK</b><p>Text and vision positions, M-RoPE or position deltas, and causal or bidirectional visibility must remain correct across the boundary.</p></div>
+          <div><b>TWO BUDGETS</b><p>The LLM token/KV budget and vision-encoder compute/cache budget are separate constraints. One token limit is not sufficient.</p></div>
+        </div>
+        <div class="mm-frameworks">
+          <div><h4>SGLang · backend- and version-specific</h4><p>Request preparation expands an image placeholder into a dummy-token span, retains <code>MultimodalInputs</code>, and computes M-RoPE positions. In the pinned version, the Transformers backend disables Chunked Prefill for multimodal models to avoid partial multimodal chunk mismatches; do not assume every backend may split a visual span arbitrarily.<sup><a href="#ref-sglang-mm">[11]</a></sup></p></div>
+          <div><h4>vLLM V1 · explicit item-boundary protection</h4><p>Encoder inputs have separate compute and cache budgets. With <code>disable_chunked_mm_input</code>, if the current token budget would end inside one image/video item, the Scheduler clips the iteration at the item start and schedules that item whole in a later iteration.<sup><a href="#ref-vllm-mm">[12]</a></sup></p></div>
+        </div>
+        <p class="figure-note"><strong>Tuning order:</strong> decompose TTFT into media fetch/decode → preprocessing → vision encoder → queueing → LLM Prefill → first-token release. If visual-token volume is the problem, first adjust resolution, tiling, or frame sampling within quality constraints, then tune the LLM chunk size. Otherwise encoder latency can be mistaken for ineffective Chunked Prefill.</p>
+      </figure>
+
+      <details class="additional-reading additional-wide">
+        <summary><span class="additional-tag">ADDITIONAL READING</span><b>Deep optimization: turn fixed-token chunks into near-constant-time microbatches for long contexts and PP</b><span class="additional-hint">SGLang DynamicChunkSizer, latency model, and PP cadence</span></summary>
+        <div class="additional-body">
+      <div class="prose">
+        <p>The long-context problem is that <strong>equal-size chunks become progressively slower later in the prompt</strong>. Let cached history length be <code>H</code> and the next chunk contain <code>x</code> new tokens. Those queries attend over roughly <code>H+x</code> keys and values, so the dominant incremental attention work grows approximately as <code>x(H+x)</code>. With fixed <code>x</code>, per-iteration latency rises as <code>H</code> grows.</p>
+        <p>This hurts two goals at once. The non-reschedulable window grows again, reintroducing Decode ITL jitter. Under PP, consecutive microbatches become uneven, so stages wait around the slower late-prompt chunks. The target should therefore shift from “always process 4K tokens” to “keep each chunk near a target duration.”</p>
+
+        <div class="deep-formula">
+          <b>SGLang's empirical latency model</b>
+          <code>f(l) = a·l² + b·l + c</code>
+          <code>ΔT(H, x) = f(H+x) − f(H) = a·x² + (2aH+b)·x</code>
+          <code>Choose x such that ΔT(H, x) ≈ T_target</code>
+          <p><code>f(l)</code> is not a theoretical FLOPs equation; it is fitted to measured Prefill latency for the current model, dtype, kernels, and GPU. As <code>H</code> grows, the positive root <code>x</code> that satisfies the same <code>T_target</code> naturally becomes smaller.</p>
+        </div>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>SGLang DynamicChunkSizer: from startup calibration to runtime chunk selection</strong><span>Source code baseline c19dc43 · Only initialized when enable_dynamic_chunking and PP>1</span></div>
+        <div class="optimizer-path">
+          <section class="optimizer-phase">
+            <h4>Startup phase: establishing device-specific models</h4>
+            <p>The goal is not to guess a universal constant, but to measure the relationship between sequence length and prefill latency on the current deployment.</p>
+            <ol class="optimizer-steps">
+              <li><span><strong>PP0 builds synthetic Prefill inputs.</strong>Sample up to 128 lengths, descending from approximately <code>1.25 × base_chunk</code>.</span></li>
+              <li><span><strong>Synchronize the GPU and measure each forward.</strong>Record wall-clock latency for every sequence length.</span></li>
+              <li><span><strong>Discard the first cold-start sample.</strong>Fit <code>f(l)=al²+bl+c</code> by least squares, require <code>a&gt;0</code>, and clamp <code>b</code> to zero if negative.</span></li>
+              <li><span><strong>Broadcast the same sample set.</strong>Every rank fits the same predictor so PP ranks do not select inconsistent chunks.</span></li>
+              <li><span><strong>Define the target.</strong><code>T_target=f(base_chunk)−f(0)</code>, the predicted incremental latency of the base chunk with no history.</span></li>
+            </ol>
+          </section>
+          <section class="optimizer-phase">
+            <h4>Each continuation: solve for x from the current history</h4>
+            <p>The Scheduler obtains <code>H</code> from the continuation request's prefix indices, then solves for the positive root that matches the target latency.</p>
+            <ol class="optimizer-steps">
+              <li><span><strong>Solve the quadratic.</strong>Let <code>B=2aH+b</code>, then compute <code>x=(-B+√(B²+4aT))/(2a)</code>.</span></li>
+              <li><span><strong>Smooth the result.</strong>Interpolate between the prediction and base chunk using an environment-controlled coefficient to avoid abrupt size changes.</span></li>
+              <li><span><strong>Apply a lower bound.</strong>Keep at least <code>base_chunk/4</code> so late-prompt work does not fragment into many tiny iterations.</span></li>
+              <li><span><strong>Align to kernel/KV granularity.</strong>Round down to <code>max(page_size, 64)</code>.</span></li>
+              <li><span><strong>Apply capacity bounds.</strong>Do not exceed <code>max_prefill_tokens</code> or <code>context_len − H − 100</code>; fall back to the static chunk if no valid prediction remains.</span></li>
+            </ol>
+          </section>
+        </div>
+        <p class="figure-note">These steps map directly to the <a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler_components/dynamic_chunk_sizer.py" target="_blank" rel="noopener">DynamicChunkSizer source</a>. The result combines an empirical model with safety constraints; it is more than a single <code>min(remaining_tokens, cap)</code>.</p>
+      </figure>
+
+      <div class="prose">
+        <h4>How this optimizes long contexts</h4>
+        <p>First, query-side activations, temporary workspace, and admission work are bounded by <code>x</code> rather than expanding with the entire prompt at once. Second, the predictor reduces <code>x</code> as history grows, bringing late-chunk latency back toward the target and preventing the non-preemptible window from growing again. Third, page/tile alignment avoids fragmentation and unfavorable kernel shapes.</p>
+        <p>This does not compress the final KV cache: every layer still stores K/V for the complete prompt, so capacity grows roughly linearly with total context. It controls <strong>new work and temporary memory per iteration</strong>. Because smaller late chunks add iteration, launch, and metadata overhead, the implementation uses smoothing, lower bounds, and alignment instead of shrinking without limit.</p>
+
+        <h4>How this reduces PP bubbles</h4>
+        <p>PP needs multiple microbatches occupying different stages concurrently. In an idealized forward-only pipeline with <code>p</code> stages and <code>m</code> equal-duration microbatches, utilization is approximately <code>m/(m+p−1)</code>. Chunking increases <code>m</code>; dynamic sizing also keeps successive microbatch durations closer, reducing the <strong>extra imbalance bubble caused by slower late-context chunks</strong>.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Where PP really benefits: Reshaping the increasingly slow Microbatch into stable Cadence</strong><span>The block width represents the relative execution time; the number of tokens only represents the trend, not a fixed prediction value.</span></div>
+        <div class="scroll"><div class="cadence-compare">
+          <div class="cadence-case"><div><b>Fixed Token Chunk</b><span>H increases, C remains unchanged</span></div><div class="cadence-track"><span class="cadence-block" style="--duration:1">MB0 · C<em>short history</em></span><span class="cadence-block" style="--duration:1.35">MB1 · C<em>history ↑</em></span><span class="cadence-block" style="--duration:1.8">MB2 · C<em>history ↑↑</em></span><span class="cadence-block" style="--duration:2.3">MB3 · C<em>late chunk</em></span></div></div>
+          <div class="cadence-case"><div><b>Latency-shaped Chunk</b><span>H grows, x gradually decreases</span></div><div class="cadence-track"><span class="cadence-block steady" style="--duration:1">MB0 · x₀<em>≈ target time</em></span><span class="cadence-block steady" style="--duration:1">MB1 · x₁↓<em>≈ target time</em></span><span class="cadence-block steady" style="--duration:1">MB2 · x₂↓<em>≈ target time</em></span><span class="cadence-block steady" style="--duration:1">MB3 · x₃↓<em>≈ target time</em></span></div></div>
+        </div></div>
+        <p class="figure-note">The long-tail microbatches in the upper row will lengthen the beats of subsequent stages together; the lower row uses different token numbers in exchange for closer execution times, making it easier for multiple in-flight microbatches to overlap stably.</p>
+      </figure>
+
+      <div class="prose">
+        <div class="aside accent"><strong>Important implementation detail: this is not closed-loop control of the slowest stage</strong>In the pinned commit, PP0 profiles synthetic Prefill inputs, broadcasts the samples to all ranks, and each rank fits the same model. This improves PP cadence through consistent, near-constant-time chunks; it does not measure every stage independently and feed the bottleneck stage back into an online controller.<sup><a href="#ref-dynamic">[4]</a></sup></div>
+        <div class="deep-boundaries">
+          <div class="deep-boundary"><b>It targets</b><p>Iteration-latency drift from long history, per-iteration activation/workspace peaks, and extra bubbles from uneven PP microbatch duration.</p></div>
+          <div class="deep-boundary"><b>It cannot eliminate</b><p>PP's inherent fill/drain bubbles, uneven layer partitioning, cross-stage communication, final KV capacity, or inefficiencies in the kernel/backend itself.</p></div>
+          <div class="deep-boundary"><b>It may add</b><p>Forward-launch, scheduling, and metadata overhead. If the fitted model differs from the online mixed workload, actual latency may miss the target.</p></div>
+          <div class="deep-boundary"><b>Online verification</b><p>At the same time, observe the chunk latency distribution, each PP stage time, pipeline idle, p99 ITL, long prompt TTFT, tokens/s and KV/activation headroom.</p></div>
+        </div>
+      </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="section" id="tradeoffs">
+      <header class="section-head">
+        <span class="section-index">03 / IMPACT &amp; LIMITS</span>
+        <h2>What Problems Does Chunked Prefill Solve, and Which Metrics Can It Improve?</h2>
+        <p class="lead">Its most direct effect is to bound how long and how many resources one prefill occupies in an iteration. That can improve decode tail latency, goodput, and PP utilization, but it does not reduce the model’s total required computation or final KV-cache capacity.</p>
+      </header>
+      <div class="prose">
+        <p>Evaluate three categories separately: the per-iteration boundaries chunking controls directly; system metrics that may improve with appropriate scheduling and mixed batching; and model work that no partitioning scheme can remove.</p>
+      </div>
+
+      <div class="wide">
+        <table class="impact-table">
+          <thead><tr><th>Problem or metric</th><th>Typical effect when enabled</th><th>Why it changes</th><th>Conditions and limits</th></tr></thead>
+          <tbody>
+            <tr class="group-row"><td colspan="4">Problems addressed and metrics that may improve</td></tr>
+            <tr><td>Decode p95 / p99 ITL, TPOT</td><td><span class="direction better">Usually lower</span></td><td>The long Prefill is split into shorter non-preemptible windows, and Decode gets the next scheduling opportunity faster.</td><td>Chunks must be small enough; the Scheduler must actually prioritize or mix in Decode at boundaries.</td></tr>
+            <tr><td>ITL Fluctuation and Generation Stall</td><td><span class="direction better">Usually lower</span></td><td>A single long prompt no longer monopolizes one long forward pass, limiting the duration of interference.</td><td>If the chunk is still large, or multiple prefills continuously occupy the budget, spikes will still occur.</td></tr>
+            <tr><td>Peak execution time of a single round</td><td><span class="direction better">Lower and more predictable</span></td><td>Each round processes at most one prefill chunk of limited size, making the Scheduler cadence more predictable.</td><td>For long contexts, sizing should account for history length; the latency of a fixed-token chunk still grows over time.</td></tr>
+            <tr><td>Activation / Workspace Peak</td><td><span class="direction better">Usually lower</span></td><td>Query-side activations and temporary workspace are bounded by the current chunk rather than the entire prompt at once.</td><td>The specific peak value depends on Attention backend, CUDA Graph, parallel mode and batch composition.</td></tr>
+            <tr><td>Throughput and GPU utilization</td><td><span class="direction trade">May improve</span></td><td>Mixed Batching allows memory-heavy Decode and compute-heavy Prefill chunks to share forward and reduce idle token budget.</td><td>Simple slicing does not guarantee throughput improvement; chunks that are too small will increase launch, metadata, and scheduling overhead.</td></tr>
+            <tr><td>SLO Goodput</td><td><span class="direction better">Often more useful than raw throughput</span></td><td>Lower ITL tails can allow more requests to satisfy TTFT and ITL SLOs at the same provisioned capacity.</td><td>Test against the real distributions of input length, output length, arrival rate, and concurrency.</td></tr>
+            <tr><td>PP Imbalance Bubble</td><td><span class="direction trade">May decrease</span></td><td>More, latency-shaped microbatches make a stable pipeline cadence easier to maintain.</td><td>Requires multiple microbatches in flight; it cannot eliminate fill/drain, communication, or an imbalanced layer partition.</td></tr>
+            <tr><td>Long Prompt TTFT</td><td><span class="direction trade">May improve or regress</span></td><td>Better queuing and batching may shorten the wait; but more iteration, launch and decode queue jumping may also delay the first token.</td><td>TTFT is not a guaranteed win; measure both p50 and p99.</td></tr>
+
+            <tr class="group-row"><td colspan="4">What chunking does not change or eliminate</td></tr>
+            <tr><td>Theoretical total FLOPs / Attention dependence</td><td><span class="direction same">Same asymptotic order</span></td><td>Subsequent chunks still need to read the complete legal prefix; the same dependency graph is just executed in multiple rounds.</td><td>Kernel shape, padding, and fusion can change wall-clock time, but do not remove the model’s logical work.</td></tr>
+            <tr><td>Final prompt KV-cache capacity</td><td><span class="direction same">Essentially unchanged</span></td><td>The K/V of each layer of the complete prompt still needs to be saved eventually, and the capacity still grows with the context length.</td><td>Chunking reduces per-iteration temporary peaks. KV compression, quantization, and offload address a different problem.</td></tr>
+            <tr><td>Model weights and output dependencies</td><td><span class="direction same">Unchanged</span></td><td>When KV, global position and causal mask are correct, Chunked Prefill retains the same logical dependencies as full Prefill.</td><td>Different kernels and floating-point reduction orders may cause small numerical differences that are not bitwise-identical.</td></tr>
+            <tr><td>Fundamental TP/PP communication</td><td><span class="direction same">Does not disappear</span></td><td>TP collectives and PP activation transfers remain. Chunking mainly changes their granularity and timing.</td><td>Insufficient network bandwidth or uneven stage partition still requires independent optimization.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="metric-reading"><b>How to decide whether to enable it</b><p>Do not compare only average tokens/s. At minimum, examine p95/p99 ITL, the TTFT distribution, SLO goodput, peak iteration latency, activation/workspace headroom, and PP stage idle time. Chunked Prefill redistributes when work happens and bounds per-iteration peaks; it does not reduce the total model workload.</p></div>
+      </div>
+
+      <div class="takeaway">
+        <h3>Takeaway: optimize an operating point, not the fastest isolated prefill</h3>
+        <p>Full Prefill tends to optimize <strong>finishing one prompt as quickly as possible in isolation</strong>. Chunked Prefill changes the objective to finding an acceptable operating point across TTFT, Decode ITL, online throughput, and peak memory. The rule is not “smaller is always better,” but <strong>choose the largest chunk that still meets p99 ITL and GPU-memory constraints</strong>, avoiding unnecessary iteration and launch overhead.</p>
+      </div>
+
+      <figure class="figure wide operating-lab">
+        <div class="figure-head"><strong>Drag Chunk Size to see the four objectives trade off</strong><span>Disabled uses full prefill. Enabled assumes mixed long-prompt and decode traffic with mixed batching available.</span></div>
+        <div class="operating-control">
+          <label for="operating-chunk">Enabled · Chunk Size</label>
+          <input id="operating-chunk" type="range" min="0" max="5" step="1" value="3" aria-label="Adjust Chunk Size for Trend Comparison">
+          <output id="operating-output" for="operating-chunk">4K tokens</output>
+        </div>
+        <p class="operating-summary" id="operating-summary">4K: Typically somewhere in the middle between latency isolation, prefill efficiency, and scheduling overhead.</p>
+        <div class="operating-scroll"><div class="operating-grid" aria-label="Comparison of the conceptual trends of the four indicators after turning off and turning on Chunked Prefill">
+          <div class="op-head">index</div><div class="op-head">Disabled · Full Prefill</div><div class="op-head">Enabled · Current Chunk</div><div class="op-head">relative change</div>
+
+          <div class="op-cell op-metric"><b>Long-request TTFT pressure</b><span>The lower the better</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill" style="--value:28%"></span></div><span class="op-value">Low</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill enabled" data-op-fill="ttft" style="--value:53%"></span></div><output class="op-value" data-op-value="ttft">Medium</output></div>
+          <div class="op-cell"><output class="op-effect worse" data-op-effect="ttft">May regress</output></div>
+
+          <div class="op-cell op-metric"><b>Decode p99 ITL pressure</b><span>The lower the better</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill" style="--value:100%"></span></div><span class="op-value">High</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill enabled" data-op-fill="itl" style="--value:55%"></span></div><output class="op-value" data-op-value="itl">Medium</output></div>
+          <div class="op-cell"><output class="op-effect better" data-op-effect="itl">improve</output></div>
+
+          <div class="op-cell op-metric"><b>Online throughput efficiency</b><span>The higher the better</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill" style="--value:76%"></span></div><span class="op-value">Medium</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill enabled" data-op-fill="throughput" style="--value:100%"></span></div><output class="op-value" data-op-value="throughput">High</output></div>
+          <div class="op-cell"><output class="op-effect better" data-op-effect="throughput">May improve</output></div>
+
+          <div class="op-cell op-metric"><b>Per-iteration activation/workspace pressure</b><span>The lower the better</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill" style="--value:100%"></span></div><span class="op-value">High</span></div>
+          <div class="op-cell"><div class="op-track"><span class="op-fill enabled" data-op-fill="memory" style="--value:54%"></span></div><output class="op-value" data-op-value="memory">Medium</output></div>
+          <div class="op-cell"><output class="op-effect better" data-op-effect="memory">improve</output></div>
+        </div></div>
+        <p class="operating-note">This is a normalized representation used to illustrate trends, not a measured benchmark: longer bars represent "higher pressure" (TTFT, ITL, memory) or "higher efficiency" (throughput). The actual curve will vary depending on the model, GPU, parallel topology, request distribution, attention backend and scheduler policy.</p>
+      </figure>
+    </section>
+
+    <section class="section" id="design">
+      <header class="section-head">
+        <span class="section-index">04 / DESIGN &amp; IMPLEMENTATION</span>
+        <h2>How Four Policies Jointly Shape Chunked Prefill</h2>
+        <p class="lead">Chunk size answers only “how much may run in this iteration.” A production scheduler must also decide which requests enter, how Prefill and Decode share a batch, and when unfinished work resumes.</p>
+      </header>
+      <div class="prose">
+        <p>The four policies below are engineering responsibilities, not necessarily four classes with matching names. They make a joint decision within each scheduling iteration: one policy’s output becomes another policy’s budget or constraint.</p>
+
+        <article class="policy-detail">
+          <header class="policy-detail-head"><div class="policy-detail-id">POLICY 01</div><h3>Chunk Sizing<span class="policy-detail-question">Which token range does this Prefill specifically advance this round?</span></h3></header>
+          <div class="policy-contract">
+            <section><h4>Inputs</h4><p>Remaining tokens, history/prefix length, static cap, target iteration latency, page/tile granularity, current batch-token budget, and context limit.</p></section>
+            <section><h4>Decision</h4><p>Choose  <code>extend_range=[start,end)</code>; determine whether it is an intermediate or final chunk, and how many KV pages to reserve.</p></section>
+            <section><h4>Invariants</h4><p><code>0&lt;x≤remaining</code>; positions remain continuous; alignment never crosses the context limit; charge the budget for actual new tokens, never the original prompt length again.</p></section>
+            <section><h4>Metrics to watch</h4><p>Chunk latency distribution, number of chunks per request, p99 ITL, long prompt TTFT, activation peak, kernel shape and launch overhead.</p></section>
+          </div>
+          <div class="policy-trace"><b>Typical failures</b><p><strong>Too large:</strong> the non-preemptible window, ITL spikes, PP imbalance, and per-iteration memory peak all return. <strong>Too small:</strong> iteration, launch, metadata, and scheduling costs consume the benefit.</p></div>
+          <div class="policy-trace"><b>SGLang mapping</b><p><code>chunked_prefill_size</code> provides the base cap. The PP dynamic path predicts the next chunk from <code>history_len</code>, then applies <code>page_size / 64</code> alignment, lower bounds, and capacity clipping.</p></div>
+        </article>
+
+        <article class="policy-detail">
+          <header class="policy-detail-head"><div class="policy-detail-id">POLICY 02</div><h3>New-work Admission<span class="policy-detail-question">In addition to the existing Decode and continuation, what new prompts can be started?</span></h3></header>
+          <div class="policy-contract">
+            <section><h4>Inputs</h4><p>Waiting-queue order, priority/arrival time, prefix-cache hits, input tokens still to compute, current and future KV budget, request slots, and compatibility constraints such as LoRA or grammar.</p></section>
+            <section><h4>Decision</h4><p>Produce the current  <code>can_run_list</code>, or stop admitting work when token, KV, slot, or tile budgets are exhausted; optionally choose lower-priority work to preempt.</p></section>
+            <section><h4>Invariants</h4><p>KV allocation and token budget are feasible at the same time; the real extend length is recalculated after cache match; temporary locks, slots or staged metadata are rolled back when the request is rejected.</p></section>
+            <section><h4>Metrics to watch</h4><p>queue age, admission reason, prefix hit length, KV usage, actual Prefill batch size, number of skipped and preempted requests.</p></section>
+          </div>
+          <div class="policy-trace"><b>Typical failures</b><p>Pure FCFS can miss valuable cache hits; favoring only short requests or cache hits can starve long prompts; checking only current input budget while ignoring future decode KV can over-admit work and trigger retraction later.</p></div>
+          <div class="policy-trace"><b>SGLang mapping</b><p><code>SchedulePolicy.calc_priority()</code> sorts first; <code>PrefillAdder</code> maintains remaining input/chunk-token budgets, KV memory, request slots, and backend tile budget in one place.</p></div>
+        </article>
+
+        <article class="policy-detail">
+          <header class="policy-detail-head"><div class="policy-detail-id">POLICY 03</div><h3>Batch Composition<span class="policy-detail-question">Is this round Prefill-only, Decode-only, or Mixed Forward?</span></h3></header>
+          <div class="policy-contract">
+            <section><h4>Inputs</h4><p>Running Decode number, batch token budget, selected Prefill chunks, mixed switch, CUDA Graph shape, and feature matrix such as logprob, input embeds, beam, spec decode, etc.</p></section>
+            <section><h4>Decision</h4><p>Choose the forward mode. A common decode-first policy places one decode token for every running request, then fills the remaining capacity with prefill tokens.</p></section>
+            <section><h4>Invariants</h4><p>Each Decode row still has only one new token; Prefill rows maintain their own prefix / extend length; after merging, input, position, KV location and output split must correspond one-to-one.</p></section>
+            <section><h4>Metrics to watch</h4><p>Mixed forward proportion, number of Decode/Prefill tokens in each round, CUDA Graph hit, graph fallback reasons, kernel time, ITL and tokens/s.</p></section>
+          </div>
+          <div class="policy-trace"><b>Typical failures</b><p>If mixed batching is enabled without kernel or metadata support, the result may be a shape mismatch, incorrect sampling, or graph fallback. Too much decode reserve stalls prefill; too little recreates ITL spikes.</p></div>
+          <div class="policy-trace"><b>SGLang mapping</b><p><code>PrefillAdder</code> uses <code>num_mixed_decode_tokens</code> to pre-charge the input and chunk budgets. Once compatibility checks pass, <code>mix_with_running()</code> converts each Decode row to a one-token extend and sets the forward mode to <code>MIXED</code>.</p></div>
+        </article>
+
+        <article class="policy-detail">
+          <header class="policy-detail-head"><div class="policy-detail-id">POLICY 04</div><h3>Continuation &amp; Preemption<span class="policy-detail-question">When should a partially processed prompt that already owns KV resume?</span></h3></header>
+          <div class="policy-contract">
+            <section><h4>Inputs</h4><p>Partial request's prefix/extend progress, occupied KV, defer times and age, waiting queue priority, free pages, abort/pause status, PP microbatch status.</p></section>
+            <section><h4>Decision</h4><p>Resume first, defer, age, preempt another request, or retract and recompute under memory pressure. Normal sampling/decode begins only after the final prompt chunk.</p></section>
+            <section><h4>Invariants</h4><p>continuation cannot lose or duplicate KV; intermediate chunks are not sampled in advance; abort, pause, weight update, and PP must safely release or retain resources across microbatch paths.</p></section>
+            <section><h4>Metrics to watch</h4><p>continuation wait time, number of consecutive defers, chunks/requests, retract and recompute tokens, KV residency, partial request age.</p></section>
+          </div>
+          <div class="policy-trace"><b>Typical failures</b><p>If new requests continually jump ahead, a partial prefill can hold KV for a long time without reaching its first token. Overprotecting continuations hurts fairness for new work. Incorrect cleanup can also cause KV leaks or double frees.</p></div>
+          <div class="policy-trace"><b>SGLang mapping</b><p><code>chunked_req</code> stores the continuation explicitly. Before admitting new work, the Scheduler calls <code>add_chunked_req()</code> and updates <code>inflight_middle_chunks</code> and <code>contains_last_prefill_chunk</code>.</p></div>
+        </article>
+
+        <div class="policy-coupling"><strong>Tune the four policies together</strong><p>Sizing bounds per-iteration cost; admission chooses who receives resources; composition decides whether prefill and decode share a forward pass; continuation prevents partial requests from starving. A chunk-size sweep alone cannot explain problems caused by queue priority, KV admission, or mixed-feature compatibility.</p></div>
+
+        <h3>The four policies form a feedback loop, not four independent switches</h3>
+        <p>This is not a fifth policy. It explains how the four policies interact. They do not form a strictly one-way pipeline: <strong>Batch Composition must first declare Decode reserve</strong>, so admission can know how much prefill budget remains. After execution, <strong>Continuation brings the partial request back to the next round</strong>. The correct model is feed-forward decision making plus cross-iteration feedback.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Policy handoff in an iteration</strong><span>The main arrows show decisions in the current iteration; the lower arrow carries unfinished work into the next one.</span></div>
+        <div class="scroll"><div class="policy-loop" role="img" aria-label="The Scheduler status goes through continuation, chunk sizing, admission, batch composition and GPU forward in sequence, and the execution results are fed back to the next iteration.">
+          <div class="policy-loop-step state"><span>INPUT</span><b>State snapshot</b><small>waiting · running<br>partial · free KV</small></div><div class="policy-loop-arrow" aria-hidden="true">→</div>
+          <div class="policy-loop-step continuation"><span>POLICY 04</span><b>Obligations</b><small>Who must continue?<br>Who can defer?</small></div><div class="policy-loop-arrow" aria-hidden="true">→</div>
+          <div class="policy-loop-step sizing"><span>POLICY 01</span><b>Work quantum</b><small>How many Prefill<br>tokens this round?</small></div><div class="policy-loop-arrow" aria-hidden="true">→</div>
+          <div class="policy-loop-step admission"><span>POLICY 02</span><b>Accepted set</b><small>budget and KV<br>Who is allowed in?</small></div><div class="policy-loop-arrow" aria-hidden="true">→</div>
+          <div class="policy-loop-step composition"><span>POLICY 03</span><b>Forward shape</b><small>Prefill-only<br>Or Mixed?</small></div><div class="policy-loop-arrow" aria-hidden="true">→</div>
+          <div class="policy-loop-step execute"><span>COMMIT</span><b>GPU + update</b><small>Write KV · sample<br>Update next round status</small></div>
+          <div class="policy-loop-feedback"><b>Cross-iteration feedback · POLICY 04</b><span>middle chunk → <code>chunked_req</code>; prompt complete → <code>running_batch</code>; request complete → stream + free KV</span></div>
+        </div></div>
+        <div class="policy-budget-note"><b>POLICY 03 constrains admission early</b><span><code>available_prefill_budget = total_budget − decode_reserve</code>. Although Composition materializes the batch after Admission, it must expose Decode reserve before it; so the four Policies are not simply 01→02→03→04.</span></div>
+      </figure>
+
+      <div class="prose">
+        <table class="compare-table policy-handoff"><thead><tr><th>Order</th><th>Primary policy</th><th>Consumes</th><th>Hands off</th></tr></thead><tbody>
+          <tr><td>0. Reserve mandatory work</td><td>03 Composition + 04 Continuation</td><td><code>running_batch</code> plus an existing  <code>chunked_req</code>, fairness/age</td><td>Decode reserve and continuations that must be tried first</td></tr>
+          <tr><td>1. Size each request</td><td>01 Chunk Sizing</td><td>remaining tokens, history length, static/dynamic cap, alignment granularity</td><td>candidate  <code>extend_range</code> with KV page demand</td></tr>
+          <tr><td>2. Decide admission</td><td>02 Admission</td><td>Candidate demand, remaining token/slot/KV budget, priority and prefix hit</td><td><code>can_run_list</code>; or a skip, stop, or preempt decision</td></tr>
+          <tr><td>3. Materialize the batch</td><td>03 Batch Composition</td><td>Accepted Prefill chunks, running Decode, feature compatibility</td><td>Prefill-only/Mixed <code>ScheduleBatch</code> with complete metadata</td></tr>
+          <tr><td>4. Commit next state</td><td>04 Continuation</td><td>forward results, completion interval, sample/abort status</td><td><code>chunked_req</code>, <code>running_batch</code> or complete/free</td></tr>
+        </tbody></table>
+        <div class="aside accent"><strong>The three critical couplings</strong>Sizing determines the demand seen by admission. Composition’s decode reserve reduces admission’s available budget. Continuation influences both current priority and the next iteration’s input. Break any link and the system risks budget mis-accounting, KV leaks, premature sampling, or starvation of partial requests.</div>
+
+      </div>
+    </section>
+
+    <section class="section" id="sglang">
+      <header class="section-head">
+        <span class="section-index">05 / SGLANG</span>
+        <h2>How SGLang Implements Chunked Prefill in Its Scheduler</h2>
+        <p class="lead">SGLang represents the scheduler state explicitly: new Prefill work lives in <code>waiting_queue</code>, active Decode work in <code>running_batch</code>, and an unfinished Prefill continuation in <code>chunked_req</code>.</p>
+      </header>
+
+      <figure class="figure wide scheduler-live" data-live-architecture>
+        <div class="live-head">
+          <div><span class="live-kicker">LIVE ARCHITECTURE FLOW</span><h3>How an SGLang Scheduler iteration flows</h3></div>
+          <div class="live-legend" aria-label="Architecture layer legend">
+            <span style="--dot:#0284c7"><i></i>Request state</span><span style="--dot:#059669"><i></i>Scheduler</span><span style="--dot:#b45309"><i></i>Memory &amp; batch</span><span style="--dot:#6d28d9"><i></i>GPU execution</span><span style="--dot:#c2410c"><i></i>Feedback</span>
+          </div>
+        </div>
+        <div class="live-scroll">
+          <svg class="live-svg" viewBox="0 0 1120 620" role="img" aria-labelledby="scheduler-live-title scheduler-live-desc">
+            <title id="scheduler-live-title">Live SGLang scheduler architecture</title>
+            <desc id="scheduler-live-desc">Request state enters the scheduler, passes through priority, chunk sizing, admission, KV budgeting, and batch composition, then reaches ModelRunner. Results are committed back as a chunked request, running batch, or completed request.</desc>
+            <defs>
+              <marker id="scheduler-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="#64748b" opacity=".72"/></marker>
+            </defs>
+
+            <rect class="arch-band" x="8" y="10" width="1104" height="102" rx="8"/><text class="arch-band-label" x="1092" y="28" text-anchor="end">REQUEST STATE</text>
+            <rect class="arch-band" x="8" y="126" width="1104" height="125" rx="8"/><text class="arch-band-label" x="1092" y="144" text-anchor="end">SCHEDULER DECISIONS</text>
+            <rect class="arch-band" x="8" y="264" width="1104" height="118" rx="8"/><text class="arch-band-label" x="1092" y="282" text-anchor="end">MEMORY &amp; BATCH</text>
+            <rect class="arch-band" x="8" y="396" width="1104" height="100" rx="8"/><text class="arch-band-label" x="1092" y="414" text-anchor="end">GPU EXECUTION</text>
+            <rect class="arch-band" x="8" y="510" width="1104" height="98" rx="8"/><text class="arch-band-label" x="1092" y="528" text-anchor="end">RESULT &amp; FEEDBACK</text>
+
+            <path id="se-ingress-waiting" class="arch-edge" data-from="ingress" data-to="waiting" d="M164 67H220"/>
+            <path id="se-waiting-core" class="arch-edge" data-from="waiting" data-to="core" d="M308 94C308 125 390 126 420 154"/>
+            <path class="arch-edge" data-from="chunked" data-to="core" d="M543 94V154"/>
+            <path class="arch-edge" data-from="running" data-to="core" d="M778 94C778 126 665 128 630 154"/>
+            <path class="arch-edge secondary" data-from="policy" data-to="core" d="M225 192H310"/>
+            <path class="arch-edge secondary" data-from="dynamic" data-to="core" d="M760 192H670"/>
+            <path id="se-core-adder" class="arch-edge" data-from="core" data-to="adder" d="M438 230C420 270 245 272 185 300"/>
+            <path class="arch-edge" data-from="adder" data-to="kv" d="M275 329H340"/>
+            <path id="se-adder-batch" class="arch-edge" data-from="adder" data-to="batch" d="M275 342C405 382 520 380 590 342"/>
+            <path class="arch-edge secondary" data-from="kv" data-to="batch" d="M520 329H590"/>
+            <path class="arch-edge" data-from="batch" data-to="mixed" d="M780 329H850"/>
+            <path class="arch-edge secondary" data-from="running" data-to="mixed" d="M865 67C1060 84 1060 260 1010 300"/>
+            <path id="se-mixed-runner" class="arch-edge" data-from="mixed" data-to="runner" d="M930 358C910 410 460 394 370 425"/>
+            <path class="arch-edge" data-from="runner" data-to="attention" d="M410 452H480"/>
+            <path id="se-attention-sampler" class="arch-edge" data-from="attention" data-to="sampler" d="M700 452H770"/>
+            <path id="se-sampler-result" class="arch-edge" data-from="sampler" data-to="result" d="M860 479C850 525 700 518 645 533"/>
+            <path class="arch-edge feedback" data-from="result" data-to="chunked" d="M455 588C198 590 178 82 455 68"/>
+            <path class="arch-edge feedback" data-from="result" data-to="running" d="M645 588C1048 598 1080 86 865 68"/>
+
+            <g class="arch-node" data-live-node="ingress" tabindex="0" role="button" aria-label="Request ingress" data-live-note="The request first enters the tokenizer and request manager. The scheduler sees prepared request state and tokenized input." style="--node:#0284c7"><rect class="arch-box" x="34" y="40" width="130" height="54" rx="7"/><rect class="arch-stripe" x="34" y="47" width="3" height="40" rx="2"/><text class="arch-title" x="99" y="64" text-anchor="middle">Request Ingress</text><text class="arch-code" x="99" y="80" text-anchor="middle">tokenized request</text></g>
+            <g class="arch-node" data-live-node="waiting" tabindex="0" role="button" aria-label="Waiting queue" data-live-note="waiting_queue holds new prefill requests not yet admitted in this iteration. SchedulePolicy determines their scan order." style="--node:#0284c7"><rect class="arch-box" x="220" y="40" width="176" height="54" rx="7"/><rect class="arch-stripe" x="220" y="47" width="3" height="40" rx="2"/><text class="arch-title" x="308" y="64" text-anchor="middle">waiting_queue</text><text class="arch-code" x="308" y="80" text-anchor="middle">new prefill work</text></g>
+            <g class="arch-node" data-live-node="chunked" tabindex="0" role="button" aria-label="Chunked request" data-live-note="chunked_req represents an unfinished prompt continuation. The current implementation tries it before scanning new waiting work." style="--node:#be185d"><rect class="arch-box" x="455" y="40" width="176" height="54" rx="7"/><rect class="arch-stripe" x="455" y="47" width="3" height="40" rx="2"/><text class="arch-title" x="543" y="64" text-anchor="middle">chunked_req</text><text class="arch-code" x="543" y="80" text-anchor="middle">partial prefill</text></g>
+            <g class="arch-node" data-live-node="running" tabindex="0" role="button" aria-label="Running batch" data-live-note="running_batch primarily contains active decode requests. With mixed chunking enabled, this work participates in the same batch composition step." style="--node:#0369a1"><rect class="arch-box" x="690" y="40" width="176" height="54" rx="7"/><rect class="arch-stripe" x="690" y="47" width="3" height="40" rx="2"/><text class="arch-title" x="778" y="64" text-anchor="middle">running_batch</text><text class="arch-code" x="778" y="80" text-anchor="middle">decode work</text></g>
+
+            <g class="arch-node" data-live-node="policy" tabindex="0" role="button" aria-label="Scheduling priority" data-live-note="SchedulePolicy.calc_priority() determines the waiting_queue scan order. Priority is not admission: every request must still pass the token and KV gates." style="--node:#059669"><rect class="arch-box" x="35" y="165" width="190" height="54" rx="7"/><rect class="arch-stripe" x="35" y="172" width="3" height="40" rx="2"/><text class="arch-title" x="130" y="188" text-anchor="middle">Priority Policy</text><text class="arch-code" x="130" y="204" text-anchor="middle">calc_priority()</text></g>
+            <g class="arch-node" data-live-node="core" tabindex="0" role="button" aria-label="Prefill scheduling loop" data-live-note="get_new_batch_prefill() is the center of the diagram: update priority and chunk size, advance the continuation, scan waiting_queue, and choose this iteration’s composition." style="--node:#059669"><rect class="arch-box" x="310" y="154" width="360" height="76" rx="8"/><rect class="arch-stripe" x="310" y="162" width="4" height="60" rx="2"/><text class="arch-title" x="490" y="180" text-anchor="middle">get_new_batch_prefill()</text><text class="arch-code" x="490" y="199" text-anchor="middle">size → admission → composition → continuation</text><text class="arch-code" x="490" y="215" text-anchor="middle">scheduler.py · one iteration</text></g>
+            <g class="arch-node" data-live-node="dynamic" tabindex="0" role="button" aria-label="Dynamic chunk size" data-live-note="For PP, dynamic chunking can override the static cap using history length and a profiled latency model, keeping microbatch duration closer to a target cadence." style="--node:#059669"><rect class="arch-box" x="760" y="165" width="230" height="54" rx="7"/><rect class="arch-stripe" x="760" y="172" width="3" height="40" rx="2"/><text class="arch-title" x="875" y="188" text-anchor="middle">DynamicChunkSizer</text><text class="arch-code" x="875" y="204" text-anchor="middle">predict(history_len)</text></g>
+
+            <g class="arch-node" data-live-node="adder" tabindex="0" role="button" aria-label="PrefillAdder budget gate" data-live-note="PrefillAdder charges input tokens, chunk tokens, request slots, and mixed-decode work together. It answers whether a request fits this iteration." style="--node:#b45309"><rect class="arch-box" x="65" y="300" width="210" height="58" rx="7"/><rect class="arch-stripe" x="65" y="307" width="3" height="44" rx="2"/><text class="arch-title" x="170" y="324" text-anchor="middle">PrefillAdder</text><text class="arch-code" x="170" y="341" text-anchor="middle">token / slot budgets</text></g>
+            <g class="arch-node" data-live-node="kv" tabindex="0" role="button" aria-label="KV memory manager" data-live-note="The KV allocator checks prefix hits, free pages, and reserved space. Passing the token-budget check does not guarantee that KV allocation succeeds." style="--node:#b45309"><rect class="arch-box" x="340" y="300" width="180" height="58" rx="7"/><rect class="arch-stripe" x="340" y="307" width="3" height="44" rx="2"/><text class="arch-title" x="430" y="324" text-anchor="middle">KV Manager</text><text class="arch-code" x="430" y="341" text-anchor="middle">prefix · pages · alloc</text></g>
+            <g class="arch-node" data-live-node="batch" tabindex="0" role="button" aria-label="ScheduleBatch" data-live-note="Accepted requests are materialized into ScheduleBatch: determine extend lengths, positions, KV locations and forward metadata." style="--node:#b45309"><rect class="arch-box" x="590" y="300" width="190" height="58" rx="7"/><rect class="arch-stripe" x="590" y="307" width="3" height="44" rx="2"/><text class="arch-title" x="685" y="324" text-anchor="middle">ScheduleBatch</text><text class="arch-code" x="685" y="341" text-anchor="middle">init_new()</text></g>
+            <g class="arch-node" data-live-node="mixed" tabindex="0" role="button" aria-label="Mixed batch" data-live-note="With --enable-mixed-chunk, the prefill batch and running decode work are merged into ForwardMode.MIXED. Otherwise, prefill and decode run in separate iterations." style="--node:#c2410c"><rect class="arch-box" x="850" y="300" width="160" height="58" rx="7"/><rect class="arch-stripe" x="850" y="307" width="3" height="44" rx="2"/><text class="arch-title" x="930" y="324" text-anchor="middle">Batch Compose</text><text class="arch-code" x="930" y="341" text-anchor="middle">mix_with_running()</text></g>
+
+            <g class="arch-node" data-live-node="runner" tabindex="0" role="button" aria-label="ModelRunner" data-live-note="ModelRunner launches the model forward pass using ForwardMode and batch metadata. This is where GPU execution begins." style="--node:#6d28d9"><rect class="arch-box" x="190" y="425" width="220" height="54" rx="7"/><rect class="arch-stripe" x="190" y="432" width="3" height="40" rx="2"/><text class="arch-title" x="300" y="449" text-anchor="middle">ModelRunner</text><text class="arch-code" x="300" y="465" text-anchor="middle">forward_batch_generation()</text></g>
+            <g class="arch-node" data-live-node="attention" tabindex="0" role="button" aria-label="Attention and KV writing" data-live-note="Each Prefill row only writes the new KV of the current chunk and reads the previous prefix KV; the Decode row reads the historical KV and appends a position." style="--node:#6d28d9"><rect class="arch-box" x="480" y="425" width="220" height="54" rx="7"/><rect class="arch-stripe" x="480" y="432" width="3" height="40" rx="2"/><text class="arch-title" x="590" y="449" text-anchor="middle">Attention + KV write</text><text class="arch-code" x="590" y="465" text-anchor="middle">extend / decode metadata</text></g>
+            <g class="arch-node" data-live-node="sampler" tabindex="0" role="button" aria-label="Sampler" data-live-note="Normal first-token sampling becomes valid only after the final prefill chunk completes. Intermediate chunks only advance prompt state." style="--node:#6d28d9"><rect class="arch-box" x="770" y="425" width="180" height="54" rx="7"/><rect class="arch-stripe" x="770" y="432" width="3" height="40" rx="2"/><text class="arch-title" x="860" y="449" text-anchor="middle">Sampler</text><text class="arch-code" x="860" y="465" text-anchor="middle">last chunk only</text></g>
+
+            <g class="arch-node" data-live-node="result" tabindex="0" role="button" aria-label="Result processing and state commit" data-live-note="Result processing chooses the next state: unfinished prefill returns to chunked_req; ongoing generation returns to running_batch; completion streams output and releases resources." style="--node:#c2410c"><rect class="arch-box" x="420" y="533" width="260" height="55" rx="7"/><rect class="arch-stripe" x="420" y="540" width="3" height="41" rx="2"/><text class="arch-title" x="550" y="557" text-anchor="middle">Result Processor</text><text class="arch-code" x="550" y="574" text-anchor="middle">chunked / running / complete</text></g>
+
+            <circle class="arch-particle" r="3.5" fill="#0284c7"><animateMotion dur="1.7s" repeatCount="indefinite"><mpath href="#se-ingress-waiting"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#059669"><animateMotion dur="2.4s" begin="-.8s" repeatCount="indefinite"><mpath href="#se-waiting-core"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#059669"><animateMotion dur="2.2s" begin="-1.1s" repeatCount="indefinite"><mpath href="#se-core-adder"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#b45309"><animateMotion dur="2.1s" begin="-.4s" repeatCount="indefinite"><mpath href="#se-adder-batch"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#6d28d9"><animateMotion dur="2.6s" begin="-1.4s" repeatCount="indefinite"><mpath href="#se-mixed-runner"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#6d28d9"><animateMotion dur="1.8s" begin="-.7s" repeatCount="indefinite"><mpath href="#se-attention-sampler"/></animateMotion></circle>
+            <circle class="arch-particle" r="3.5" fill="#c2410c"><animateMotion dur="2s" begin="-1.2s" repeatCount="indefinite"><mpath href="#se-sampler-result"/></animateMotion></circle>
+          </svg>
+        </div>
+        <p class="live-explain" aria-live="polite"><b data-live-label>Hover or focus any node</b><span data-live-description>Particles show data-flow direction; highlighting reveals the node's immediate upstream and downstream connections. Keyboard users can focus nodes with Tab.</span></p>
+        <div class="live-cycle" aria-label="Seven steps of a scheduling iteration">
+          <span><b>01 · PRIORITY</b>Order the waiting queue</span><span><b>02 · SIZE</b>Determine chunk cap for this round</span><span><b>03 · CONTINUE</b>Try chunked_req first</span><span><b>04 · ADMIT</b>Scan new requests and charge budgets</span><span><b>05 · COMPOSE</b>Build the batch; optionally mix</span><span><b>06 · FORWARD</b>Run the GPU forward and write KV</span><span><b>07 · COMMIT</b>Emit output or commit next-iteration state</span>
+        </div>
+        <figcaption>This diagram follows the <code>get_new_batch_prefill()</code> main path. Moving particles show data flow, not relative kernel time. Click, hover, or focus a node to inspect its responsibility and adjacent connections.</figcaption>
+      </figure>
+
+      <div class="prose">
+        <h3>Code map: jump from the diagram to source</h3>
+        <p>All links are pinned to commit <code>c19dc43</code>. On a first pass, follow ①→②→③→④→⑤ through the main scheduling path; then use the rightmost column to inspect budget accounting, mixed batching, execution, and result write-back.</p>
+      </div>
+      <div class="wide">
+        <table class="compare-table code-map"><thead><tr><th>Reading order</th><th>Diagram location</th><th>Source entry point</th><th>What to inspect</th></tr></thead><tbody>
+          <tr><td>① Scheduler heartbeat</td><td>Iteration entry point</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L1862" target="_blank" rel="noopener"><code>run_event_loop()</code></a><br><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L1913" target="_blank" rel="noopener"><code>event_loop_normal()</code></a></td><td>The outer loop of request entry, batch selection, run batch, and processing of results.</td></tr>
+          <tr><td>② Batch selection</td><td>Request state → Scheduler</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L3622" target="_blank" rel="noopener"><code>get_next_batch_to_run()</code></a></td><td>When to continue running Decode and when to try to generate a new Prefill batch.</td></tr>
+          <tr><td>③ Prefill path</td><td>Priority / size / continuation</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L3790" target="_blank" rel="noopener"><code>get_new_batch_prefill()</code></a><br><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L3817" target="_blank" rel="noopener"><code>_get_new_batch_prefill_raw()</code></a></td><td>Run <code>calc_priority</code>, choose dynamic size, construct the adder, try <code>chunked_req</code> first, then scan the waiting queue.</td></tr>
+          <tr><td>④ Budget &amp; admission</td><td>PrefillAdder / KV gate</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/schedule_policy.py#L620" target="_blank" rel="noopener"><code>PrefillAdder</code></a><br><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/schedule_policy.py#L1022" target="_blank" rel="noopener"><code>add_chunked_req()</code></a> · <a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/schedule_policy.py#L1232" target="_blank" rel="noopener"><code>add_one_req()</code></a></td><td>How <code>rem_input_tokens</code>, <code>rem_chunk_tokens</code>, memory, request slots, and tile budgets are charged together.</td></tr>
+          <tr><td>⑤ Batch materialization</td><td>ScheduleBatch / Mixed</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/schedule_batch.py#L3096" target="_blank" rel="noopener"><code>mix_with_running()</code></a></td><td>How to convert Decode row into 1-token extend, and how to merge seq length, KV location and forward metadata.</td></tr>
+          <tr><td>⑥ PP dynamic size</td><td>DynamicChunkSizer</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler_components/dynamic_chunk_sizer.py#L38" target="_blank" rel="noopener"><code>DynamicChunkSizer</code></a><br><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler_components/dynamic_chunk_sizer.py#L115" target="_blank" rel="noopener"><code>predict()</code></a></td><td>Startup profiling, quadratic latency model, history-aware chunk prediction, and safety clipping.</td></tr>
+          <tr><td>⑦ Execute</td><td>ModelRunner / GPU</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L4311" target="_blank" rel="noopener"><code>run_batch()</code></a></td><td>How do the batches produced by Scheduler enter the forward, sampling and overlap paths.</td></tr>
+          <tr><td>⑧ Feedback</td><td>Result → next state</td><td><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L4738" target="_blank" rel="noopener"><code>process_batch_result()</code></a><br><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L4167" target="_blank" rel="noopener"><code>update_running_batch()</code></a></td><td>Sampling results, completing requests, running batch compression, and how the next round of status is formed.</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="prose">
+        <p>This design makes “is there an unfinished chunk to resume?” a direct Scheduler input. Each Prefill scheduling iteration chooses the current chunk size, creates <code>PrefillAdder</code>, tries to advance the existing <code>chunked_req</code>, and then scans the waiting queue according to the scheduling policy. It materializes a <code>ScheduleBatch</code> and each request's <code>extend_range</code>, allocates KV, and—when configured—mixes the Prefill batch with running Decode work.</p>
+
+        <div class="state-table">
+          <div class="state-row"><b><code>waiting_queue</code></b><p>Requests not yet admitted to the current Prefill iteration. Schedule policy, priority, and prefix-cache state determine scan order.</p><code>new work</code></div>
+          <div class="state-row"><b><code>running_batch</code></b><p>Usually contains active Decode requests. With mixed chunking enabled, their Decode tokens consume part of the current iteration's budget first.</p><code>decode work</code></div>
+          <div class="state-row"><b><code>chunked_req</code></b><p>A request whose prompt is only partially processed and whose partial KV remains resident. SGLang tries to resume it before scanning new waiting work.</p><code>continuation</code></div>
+          <div class="state-row"><b><code>PrefillAdder</code></b><p>Centralizes remaining input-token, chunk-token, KV-memory, and related budgets to decide whether a request fits the current Prefill batch.</p><code>admission gate</code></div>
+        </div>
+
+      </div>
+
+      <div class="wide codeblock">
+        <div class="code-head"><span>scheduler.py · The critical path of a round of Prefill scheduling (simplified excerpt)</span><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L3790" target="_blank" rel="noopener">upstream @ c19dc43</a></div>
+        <pre><span class="cm"># 1. Static chunk cap; PP may override it dynamically from history length</span>
+chunked_prefill_size = self.chunked_prefill_size
+<span class="kw">if</span> self.chunked_req <span class="kw">is not</span> <span class="kw">None</span> <span class="kw">and</span> self.dynamic_chunk_sizer:
+    dynamic_size = self.dynamic_chunk_sizer.<span class="fn">predict</span>(history_len)
+    <span class="kw">if</span> dynamic_size <span class="kw">is not</span> <span class="kw">None</span>:
+        chunked_prefill_size = dynamic_size
+
+<span class="cm"># 2. PrefillAdder accounts for batch, chunk, mixed-Decode, and KV-memory constraints together</span>
+adder = <span class="fn">PrefillAdder</span>(
+    ..., self.max_prefill_tokens, chunked_prefill_size,
+    running_bs <span class="kw">if</span> self.is_mixed_chunk <span class="kw">else</span> 0, ...)
+
+<span class="cm"># 3. Resume the continuation before admitting new waiting work</span>
+<span class="kw">if</span> self.chunked_req <span class="kw">is not</span> <span class="kw">None</span>:
+    self.chunked_req.<span class="fn">init_next_round_input</span>()
+    self.chunked_req = adder.<span class="fn">add_chunked_req</span>(self.chunked_req)
+
+<span class="kw">for</span> req <span class="kw">in</span> self.waiting_queue:
+    req.<span class="fn">init_next_round_input</span>(self.tree_cache)
+    res = adder.<span class="fn">add_one_req</span>(req, has_chunked_req=...)</pre>
+      </div>
+
+      <div class="prose">
+        <h3>The key parameters operate at different levels</h3>
+        <table class="compare-table"><thead><tr><th>Parameter</th><th>What it controls</th><th>What it does not mean</th></tr></thead><tbody>
+          <tr><td><code>--chunked-prefill-size</code></td><td>Maximum tokens in one prompt chunk; <code>-1</code> disables chunking.</td><td>It is not the total token budget for the entire Prefill batch.</td></tr>
+          <tr><td><code>--max-prefill-tokens</code></td><td>Total input-token budget for the Prefill batch.</td><td>It is shared; each request does not receive this full amount.</td></tr>
+          <tr><td><code>--enable-mixed-chunk</code></td><td>Allows Prefill and Decode to share a batch.</td><td>It does not enable chunking itself; this option is disabled by default in the checked commit.</td></tr>
+          <tr><td><code>--enable-dynamic-chunking</code></td><td>Under PP, selects chunk size dynamically from a profiled latency model.</td><td>It is not automatically better for non-PP deployments.</td></tr>
+        </tbody></table>
+        <p><code>PrefillAdder</code> matters because it closes all budgets in one place. With mixed chunking enabled, running Decode tokens are deducted from the available input and chunk budgets, while the KV allocator reserves space for those mixed tokens. Changing only the chunk size without updating every related accounting path can produce an implementation that appears to work, but fails under pressure.</p>
+
+        <h3>Why token count alone is insufficient for DynamicChunkSizer</h3>
+        <p>A 4K-token chunk with zero history is not equivalent to a 4K-token chunk after a 64K-token prefix: Attention must read a very different amount of history, so forward latency changes. SGLang's PP dynamic-chunking path profiles Prefill latency, fits an approximate quadratic model of sequence length versus runtime, and predicts the next chunk size from the current history length. The target is closer to a fixed-duration microbatch than a mechanically fixed token count.<sup><a href="#ref-dynamic">[4]</a></sup></p>
+
+        <div class="aside"><strong>Interaction with speculative decoding</strong>Speculative decoding primarily optimizes Decode. With mixed chunking enabled, the selected speculative algorithm must support that execution path. Validate draft/verify metadata, lookahead tokens, CUDA Graph behavior, and the final Prefill chunk—not merely whether the server starts.</div>
+      </div>
+    </section>
+
+    <section class="section" id="vllm">
+      <header class="section-head">
+        <span class="section-index">06 / VLLM</span>
+        <h2>vLLM: Let the Per-Iteration Token Budget Create Chunks</h2>
+        <p class="lead">vLLM V1 does not maintain a separate queue of fixed-size chunks. Instead, each request advances its <code>num_computed_tokens</code> toward the required token count, clipped by the iteration's global token budget. Any Prefill work that does not fit naturally remains for the next iteration.</p>
+      </header>
+
+      <div class="prose">
+        <h3>The same mechanism, represented differently</h3>
+        <p>At the start of each iteration, the Scheduler establishes <code>token_budget</code> and <code>input_budget</code>. It scans <code>running</code> requests first, then <code>waiting</code> requests. For each request, it computes the number of tokens still required and clips that amount to the remaining budget. If the KV allocator can provide new blocks, the request joins the iteration; otherwise, the Scheduler may preempt according to policy or stop admitting more work.</p>
+        <p>This is why vLLM does not need an exact equivalent of SGLang's dedicated <code>chunked_req</code> slot. A request may already have some <code>num_computed_tokens</code> but still be short of the prompt boundary; it simply continues as in-progress work in later iterations. The V1 documentation summarizes the default policy as: schedule pending Decode first, then fill the remaining <code>max_num_batched_tokens</code> budget with Prefill. Prefill work that does not fit is chunked automatically.<sup><a href="#ref-vllm-tuning">[8]</a></sup></p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>SGLang and vLLM V1: concept mapping</strong><span>Same goal, different state model and primary controls</span></div>
+        <table class="compare-table"><thead><tr><th>Question</th><th>SGLang</th><th>vLLM V1</th></tr></thead><tbody>
+          <tr><td>Where partial Prefill lives</td><td>An explicit <code>chunked_req</code>; newly admitted work remains in <code>waiting_queue</code>.</td><td>Each request records progress in <code>num_computed_tokens</code>; in-progress work lives in <code>running</code>.</td></tr>
+          <tr><td>Per-request chunk cap</td><td><code>--chunked-prefill-size</code>, optionally overridden by PP's DynamicChunkSizer.</td><td>Usually clipped naturally by the remaining <code>max_num_batched_tokens</code>; <code>long_prefill_token_threshold</code> can impose an additional cap during contention.</td></tr>
+          <tr><td>Per-iteration token budget</td><td><code>--max-prefill-tokens</code>, coordinated with mixed-Decode accounting.</td><td><code>--max-num-batched-tokens</code> is the main global budget; the implementation also distinguishes scheduled and input budgets.</td></tr>
+          <tr><td>Prefill + Decode</td><td>After <code>--enable-mixed-chunk</code>, <code>mix_with_running()</code> merges them explicitly.</td><td>V1 schedules pending Decode first, then uses the remaining budget for Prefill, producing a mixed batch in the same iteration.</td></tr>
+          <tr><td>KV pressure</td><td><code>PrefillAdder</code> and the allocator jointly perform admission; failure leads to skip, retract, or preempt behavior.</td><td>If <code>kv_cache_manager.allocate_slots()</code> fails, vLLM may preempt a lower-priority running request; V1 uses recompute preemption by default.</td></tr>
+        </tbody></table>
+        <p class="figure-note">The crucial distinction: vLLM's <code>max_num_batched_tokens</code> is the token budget for <strong>the entire iteration</strong>, not a fixed chunk size assigned to each request.</p>
+      </figure>
+
+      <div class="wide codeblock">
+        <div class="code-head"><span>vllm/v1/core/sched/scheduler.py · How chunks are generated from the remaining budget (simplified excerpt)</span><a href="https://github.com/vllm-project/vllm/blob/4edb55169f69c76bb87ab9f154585917cb01bb17/vllm/v1/core/sched/scheduler.py#L573-L665" target="_blank" rel="noopener">upstream @ 4edb551</a></div>
+        <pre><span class="cm"># Shared budget for each round; there may be both Decode and in-progress Prefill in RUNNING</span>
+token_budget = self.max_num_scheduled_tokens
+input_budget = self.scheduler_config.max_num_batched_tokens
+
+<span class="kw">for</span> request <span class="kw">in</span> self.running:
+    num_new_tokens = request.num_tokens_with_spec - request.num_computed_tokens
+
+    <span class="kw">if</span> 0 &lt; long_prefill_token_threshold &lt; num_new_tokens:
+        num_new_tokens = long_prefill_token_threshold
+
+    <span class="cm"># Key: The maximum amount of budget left in this round will be pushed forward; the remaining part will be left to the next round.</span>
+    num_new_tokens = <span class="fn">min</span>(num_new_tokens, token_budget, input_budget - draft_slots)
+    new_blocks = self.kv_cache_manager.<span class="fn">allocate_slots</span>(request, num_new_tokens, ...)
+
+    <span class="kw">if</span> new_blocks <span class="kw">is not</span> <span class="kw">None</span>:
+        num_scheduled_tokens[request.request_id] = num_new_tokens
+        token_budget -= num_new_tokens
+        input_budget -= num_new_tokens + draft_slots
+
+<span class="cm"># WAITING requests are also subject to request_token_budget</span>
+<span class="kw">if</span> <span class="kw">not</span> enable_chunked_prefill <span class="kw">and</span> num_new_tokens &gt; request_token_budget:
+    <span class="kw">break</span>
+num_new_tokens = <span class="fn">min</span>(num_new_tokens, request_token_budget)</pre>
+      </div>
+
+      <div class="prose">
+        <h3>How to read the main knobs</h3>
+        <table class="compare-table"><thead><tr><th>Parameter</th><th>What it actually controls</th><th>Typical direction</th></tr></thead><tbody>
+          <tr><td><code>--enable-chunked-prefill</code></td><td>Allows Prefill to be advanced in multiple rounds when the single-round budget cannot be filled; V1 is enabled by default when available.</td><td>When closed, the full Prefill must fit into the batch token budget.</td></tr>
+          <tr><td><code>--max-num-batched-tokens</code></td><td>The total number of tokens schedulable per iteration—the most important operating-point knob.</td><td>Smaller values usually favor ITL; larger values usually favor TTFT and throughput. The official documentation suggests testing values above 8192 for small models on large GPUs when optimizing throughput.</td></tr>
+          <tr><td><code>--max-num-seqs</code></td><td>Number of sequences per round and runner / CUDA Graph capacity bounds.</td><td>It constrains the concurrent shape and is not equivalent to the token budget.</td></tr>
+          <tr><td><code>--long-prefill-token-threshold</code></td><td>When there are competing requests, there is a limit on how many tokens a single long Prefill can advance in this round; this cap is not imposed when running alone.</td><td>Used to reduce the risk of a long Prefill eating up the entire round budget; the default value is 0, which means no additional restrictions.<sup><a href="#ref-vllm-config">[10]</a></sup></td></tr>
+        </tbody></table>
+        <div class="aside green"><strong>A unifying abstraction for reading the vLLM source</strong><code>num_computed_tokens</code> tracks how far computation has progressed toward the request's required token count. That difference can represent Chunked Prefill while also accommodating prefix caching, speculative decoding, and resumed requests. Chunking emerges naturally whenever the current iteration's budget cannot close the gap in one pass.<sup><a href="#ref-vllm-scheduler">[9]</a></sup></div>
+      </div>
+    </section>
+
+    <section class="section" id="evaluation">
+      <header class="section-head">
+        <span class="section-index">07 / PERFORMANCE EVIDENCE</span>
+        <h2>Existing Performance Evidence: Benefits and Costs</h2>
+        <p class="lead">This section retains the original paper figures instead of quoting only headline multipliers. Before transferring a result to your SGLang deployment, verify the model, GPU, parallelism strategy, dataset, and SLO.</p>
+      </header>
+      <div class="prose">
+        <h3>Read the Sarathi-Serve numbers in context</h3>
+        <p>Sarathi-Serve combines Chunked Prefill with stall-free batching and compares serving capacity under tail-latency constraints. The paper reports 2.6× capacity over the then-current vLLM for Mistral-7B on one A100; up to 3.7× for Yi-34B on two A100s with TP=2; and up to 5.6× end-to-end capacity for Falcon-180B on eight A100s with PP=2, TP=4, and commodity Ethernet. See the original <a href="https://arxiv.org/html/2403.02310v3#S5.F10" target="_blank" rel="noopener">Figure 10</a>, <a href="https://arxiv.org/html/2403.02310v3#S5.F11" target="_blank" rel="noopener">Figure 11</a>, and <a href="https://arxiv.org/html/2403.02310v3#S5.F13" target="_blank" rel="noopener">Figure 13</a>.<sup><a href="#ref-sarathi">[1]</a></sup></p>
+        <p>These are not isolated “Chunked Prefill speedups,” and they should not be used to predict current SGLang performance directly. They include the combined effects of scheduling, hybrid batching, parallelism, and a particular SLO; the baseline is also the serving stack available when the paper was evaluated.</p>
+      </div>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Serving-capacity gain reported in the paper</strong><span>Relative to the vLLM used in each experiment; model, GPU, and parallel configuration differ across rows</span></div>
+        <div class="bars" role="img" aria-label="Sarathi-Serve paper reports: Mistral 7B single A100 is 2.6 times, Yi 34B two A100 TP2 is the highest 3.7 times, Falcon 180B eight A100 PP2 TP4 is the highest 5.6 times serving capacity.">
+          <div class="bar-row"><div class="bar-label"><b>Mistral-7B</b><span>1× A100</span></div><div class="bar-track"><div class="bar-fill" style="--w:43.3%"></div></div><div class="bar-value">2.6×</div></div>
+          <div class="bar-row"><div class="bar-label"><b>Yi-34B</b><span>2× A100 · TP=2</span></div><div class="bar-track"><div class="bar-fill" style="--w:61.7%"></div></div><div class="bar-value">3.7×</div></div>
+          <div class="bar-row"><div class="bar-label"><b>Falcon-180B</b><span>8× A100 · PP=2 · TP=4</span></div><div class="bar-track"><div class="bar-fill" style="--w:93.3%"></div></div><div class="bar-value">5.6×</div></div>
+        </div>
+        <p class="figure-note">Summary chart redrawn from values reported in the paper; it is not an original paper figure. Sources: <a href="https://arxiv.org/html/2403.02310v3#S5.F10" target="_blank" rel="noopener">Sarathi-Serve Figure 10</a> and <a href="https://arxiv.org/html/2403.02310v3#S5.F11" target="_blank" rel="noopener">Figure 11</a>. The horizontal axis is capped at 6×.</p>
+      </figure>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Original Figure 12 · Latency–Throughput Tradeoff</strong><span>Click on the chart to open the corresponding location of the original paper.</span></div>
+        <a class="paper-full" href="https://arxiv.org/html/2403.02310v3#S5.F12" target="_blank" rel="noopener"><img loading="lazy" src="assets/sarathi-fig12-latency-throughput.svg" alt="Sarathi-Serve Original Figure 12: Latency-throughput tradeoff of vLLM and Sarathi-Serve on Mistral-7B and Yi-34B."></a>
+        <div class="paper-reading"><b>How to read this figure</b><p>Each point represents one scheduler, batch-size, and token-budget configuration. As offered load increases, TTFT and P99 TBT degrade at different rates. Capacity therefore means the maximum sustainable QPS that still satisfies the specified SLO—not a single-request speedup. Sarathi-Serve compares 512- and 2048-token budgets, exposing the operating point between small-chunk isolation and chunking overhead.</p></div>
+        <p class="figure-note">Original image and caption:<a href="https://arxiv.org/html/2403.02310v3#S5.F12" target="_blank" rel="noopener">Sarathi-Serve v3 · Figure 12</a>. This page saves the original SVG provided by arXiv HTML, without redrawing the data.</p>
+      </figure>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Original Figure 13 · Why PP can change the results of cross-node deployment</strong><span>Falcon-180B · 8×A100 · 100 Gbps Ethernet</span></div>
+        <div class="paper-grid">
+          <figure class="paper-card"><a href="https://arxiv.org/html/2403.02310v3#S5.F13" target="_blank" rel="noopener"><img loading="lazy" src="assets/sarathi-fig13a-pp-tp-latency.svg" alt="Sarathi-Serve Figure 13a: Comparison of decode-only TBT for Falcon-180B TP and PP configurations."></a><figcaption><b>FIGURE 13(a) · DECODE-ONLY TBT</b>Cross-node collectives in TP-8 enter the critical path; TP-4 + PP-2 achieves lower median TBT.</figcaption></figure>
+          <figure class="paper-card"><a href="https://arxiv.org/html/2403.02310v3#S5.F13" target="_blank" rel="noopener"><img loading="lazy" src="assets/sarathi-fig13b-pp-tp-capacity.svg" alt="Sarathi-Serve Figure 13b: Falcon-180B serving capacity under strict and relaxed SLOs."></a><figcaption><b>FIGURE 13(b) · CAPACITY UNDER SLO</b>Conventional PP suffers from bubbles under a strict SLO; the paper's chunked-prefill schedule restores capacity with more uniform microbatches.</figcaption></figure>
+        </div>
+        <div class="paper-reading"><b>Scope of the conclusion</b><p>This set of graphs demonstrates the trade-off between cross-node TP communications and PP bubbles for a specific Falcon-180B, two-node 100 Gbps Ethernet configuration; it is not "PP is always faster than TP". When migrating to NVLink / NVSwitch, different stage partitions or different models, the collective, stage time and bubble need to be re-measured.</p></div>
+        <p class="figure-note">Original image and complete analysis:<a href="https://arxiv.org/html/2403.02310v3#S5.F13" target="_blank" rel="noopener">Sarathi-Serve v3 · Figure 13</a>. This page uses original SVG.</p>
+      </figure>
+
+      <figure class="figure wide">
+        <div class="figure-head"><strong>Original Figure 14 · Smaller Chunks Increase Prefill Overhead</strong><span>Yi-34B · TP=2 · normalized against no chunking</span></div>
+        <a class="paper-full compact" href="https://arxiv.org/html/2403.02310v3#S5.F14" target="_blank" rel="noopener"><img loading="lazy" src="assets/sarathi-fig14-chunking-overhead.svg" alt="Sarathi-Serve Original Figure 14: Prefill runtime overhead of Yi-34B under different prompt lengths and chunk sizes."></a>
+        <div class="paper-reading"><b>How to read this figure</b><p>The vertical axis is total Prefill runtime normalized to the no-chunking baseline. The paper reports up to roughly 25% overhead at chunk=512, while chunk=2048 is close to negligible. Smaller chunks shorten the non-preemptible window, but eventually lose efficiency to extra iterations, launches, and less favorable kernel shapes.</p></div>
+        <p class="figure-note">Original image and caption:<a href="https://arxiv.org/html/2403.02310v3#S5.F14" target="_blank" rel="noopener">Sarathi-Serve v3 · Figure 14</a>. Only trends can be migrated here, and 512 / 2048 cannot be regarded as a universal answer to SGLang.</p>
+      </figure>
+
+      <div class="prose">
+        <div class="evidence-grid">
+          <div class="evidence-block"><strong>Smaller chunks incur more overhead</strong><p>In the Yi-34B, TP=2 Prefill ablation, chunk=512 adds up to about 25% to total Prefill runtime, while chunk=2048 adds almost none. The exact values are experiment-specific, but the direction is important.</p></div>
+          <div class="evidence-block"><strong>Chunking and hybrid batching must be coordinated</strong><p>The ablation shows that chunking alone can increase TTFT through inefficient slicing, while hybrid batching alone can still suffer TBT stalls from full-length Prefill. Combining the two improves both dimensions.</p></div>
+        </div>
+        <blockquote>What the public evaluation gives is not "set the parameter to 2048", but an experimental hypothesis: there is an interval that is small enough to protect tail latency, but large enough not to be swallowed up by slicing overhead.</blockquote>
+
+        <h3>SGLang's current default is just a hardware heuristic</h3>
+        <p>In the checked SGLang commit, when the user does not set a value explicitly, the memory hook chooses a starting point from visible GPU memory: 2K below 20 GiB, 4K from 20–60 GiB, 8K from 60–160 GiB, and 16K at 160 GiB or above. The code describes this as a heuristic based on the observation that more memory often accompanies a stronger GPU; it also helps reserve headroom for activations and CUDA Graphs. It is not a workload-aware optimum.<sup><a href="#ref-memory">[5]</a></sup></p>
+        <p>SGLang's tuning guide offers symptom-driven guidance: if OOM occurs during Prefill, reduce <code>--chunked-prefill-size</code> to 4096 or 2048. This saves memory but slows Prefill for long prompts.<sup><a href="#ref-tuning">[6]</a></sup></p>
+
+        <h3>Mapping paper trends to SGLang parameters</h3>
+        <p>The table preserves a “symptom → preferred knob → related checks” mapping without prescribing a fixed tuning sequence. The paper's token budget does not map one-to-one to an SGLang parameter; evaluate <code>--chunked-prefill-size</code>, <code>--max-prefill-tokens</code>, and <code>--enable-mixed-chunk</code> separately when transferring its findings.</p>
+        <table class="tune-table"><thead><tr><th>Observed symptom</th><th>Try first</th><th>Check at the same time</th></tr></thead><tbody>
+          <tr><td>p99 ITL has obvious spikes</td><td>Reduce chunk; enable/check mixed; increase Decode reserve.</td><td>Whether the spikes are related to long prefill arrival times and whether graph fallback occurs.</td></tr>
+          <tr><td>Long-prompt TTFT regresses</td><td>Increase the chunk or total Prefill budget; reduce unnecessary deferral.</td><td>Scheduler/launch overhead, continuation starvation, and cache-hit bucketing.</td></tr>
+          <tr><td>Prefill OOM</td><td>Reduce chunk to 4K/2K; reduce <code>mem_fraction_static</code>.</td><td>activation headroom, CUDA Graph buffers, and the actual parsed configuration.</td></tr>
+          <tr><td>Queue is deep but GPU utilization is low</td><td>Check admission, <code>max_prefill_tokens</code>, KV capacity, and the CPU scheduler.</td><td>Do not simply keep increasing the chunk; Prefill granularity may not be the bottleneck.</td></tr>
+          <tr><td>PP stage latency varies widely</td><td>Try <code>--enable-dynamic-chunking</code>.</td><td>Per-stage latency, in-flight microbatches, communication, and uneven layer partitioning.</td></tr>
+          <tr><td>Incorrect results after enabling mixed batching</td><td>Disable mixed batching, then re-enable features one at a time.</td><td>Speculative decoding, logprob, beam search, LoRA, multimodal paths, and CUDA Graphs.</td></tr>
+        </tbody></table>
+
+        <div class="aside green"><strong>Selection rule</strong>Once the configuration is correct, avoids OOM, and meets the Decode p99 ITL target, choose the largest chunk that still satisfies those constraints. Then tune the total Prefill budget, mixed batching, and continuation policy. This reduces chunking rounds without allowing long Prefill work to monopolize an iteration.</div>
+
+        <div class="sources">
+          <h3 style="margin-top:0">References</h3>
+          <p class="source-date">Version-sensitive content was verified on 2026-09-22; recheck your installed version before deployment.</p>
+          <ol>
+            <li id="ref-sarathi"><a href="https://arxiv.org/abs/2403.02310">Sarathi-Serve: Taming Throughput-Latency Tradeoff in LLM Inference</a> — Defines chunked prefills and stall-free batching, with ablations and serving-capacity evaluation.</li>
+            <li><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L3790">SGLang Scheduler</a> — Main path for Prefill scheduling, continuation, and batch construction.</li>
+            <li><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/schedule_policy.py#L620">SGLang PrefillAdder</a> — Input, chunk, and KV-memory budget accounting.</li>
+            <li id="ref-dynamic"><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler_components/dynamic_chunk_sizer.py">SGLang DynamicChunkSizer</a> — PP Prefill latency profiling and dynamic chunk prediction.</li>
+            <li id="ref-memory"><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/arg_groups/memory_hook.py">SGLang memory hook</a> — GPU-memory default buckets and activation/CUDA Graph headroom heuristic.</li>
+            <li id="ref-tuning"><a href="https://docs.sglang.ai/advanced_features/hyperparameter_tuning.html">SGLang Hyperparameter Tuning</a> — Guidance for throughput, KV usage, OOM, and chunk-size tuning.</li>
+            <li><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/docs/docs/developer_guide/bench_serving.mdx">SGLang Bench Serving Guide</a> — Benchmark methods for TTFT, ITL, E2E latency, throughput, and request rate.</li>
+            <li id="ref-vllm-tuning"><a href="https://github.com/vllm-project/vllm/blob/4edb55169f69c76bb87ab9f154585917cb01bb17/docs/configuration/optimization.md">vLLM Chunked Prefill Tuning</a> — V1 defaults and the <code>max_num_batched_tokens</code> TTFT/ITL/throughput trade-off.</li>
+            <li id="ref-vllm-scheduler"><a href="https://github.com/vllm-project/vllm/blob/4edb55169f69c76bb87ab9f154585917cb01bb17/vllm/v1/core/sched/scheduler.py">vLLM V1 Scheduler</a> — RUNNING/WAITING scheduling, token-budget clipping, KV-slot allocation, and preemption.</li>
+            <li id="ref-vllm-config"><a href="https://github.com/vllm-project/vllm/blob/4edb55169f69c76bb87ab9f154585917cb01bb17/vllm/config/scheduler.py">vLLM SchedulerConfig</a> — Configuration semantics for <code>max_num_batched_tokens</code>, Chunked Prefill, and the long-Prefill threshold.</li>
+            <li id="ref-sglang-mm"><a href="https://github.com/sgl-project/sglang/blob/c19dc43cc732a3a7e9b487ba26f4af866cbe620b/python/sglang/srt/managers/scheduler.py#L1304-L1318">SGLang Multimodal Chunk Guard</a> — Multimodal Chunked Prefill compatibility protection for the Transformers backend; the request-preparation path in the same file expands placeholders and computes M-RoPE.</li>
+            <li id="ref-vllm-mm"><a href="https://github.com/vllm-project/vllm/blob/4edb55169f69c76bb87ab9f154585917cb01bb17/vllm/v1/core/sched/scheduler.py#L1760-L1822">vLLM Multimodal Encoder Scheduling</a> — Encoder compute/cache budgets, multimodal-item boundary clipping, and <code>disable_chunked_mm_input</code> behavior.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><span>Chunked Prefill · A scheduling story for LLM serving</span><span>Published results are evidence, not deployment defaults</span></footer>
+
+  <script data-diagram-controls>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const staticOverride = params.get('motion') === 'static' || document.documentElement.dataset.motion === 'static';
+      const requestedStep = params.get('step');
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+      document.fonts.ready.then(() => { document.documentElement.dataset.fontsReady = 'true'; });
+
+      document.querySelectorAll('[data-motion-root]').forEach((root) => {
+        const count = Number(root.dataset.stepCount);
+        const hold = parseFloat(getComputedStyle(root).getPropertyValue('--motion-hold')) || 720;
+        const parsedStep = requestedStep !== null && /^\d+$/.test(requestedStep) ? Number(requestedStep) : null;
+        const exactStep = params.get('motion') === 'step' && Number.isSafeInteger(parsedStep) && parsedStep >= 0 && parsedStep <= count ? parsedStep : null;
+        const items = [...root.querySelectorAll('[data-motion-item]')];
+        const labels = Array.from({ length: count + 1 }, (_, index) => index === 0
+          ? 'Ready'
+          : items.filter((item) => !item.hasAttribute('data-motion-decorative') && Number(item.dataset.step) === index)
+              .map((item) => item.getAttribute('aria-label')).join('; '));
+        const controls = root.querySelector('[data-motion-controls]');
+        const status = root.querySelector('[data-motion-status]');
+        const visibleStep = root.querySelector('[data-motion-step-label]');
+        let step = count;
+        let timer = 0;
+        let playing = false;
+        let stepBeforeReduce = 0;
+        let resumeAfterReduce = root.dataset.motionMode === 'reveal';
+
+        const buttons = (action) => controls.querySelector(`[data-motion-action="${action}"]`);
+        const clearClock = () => { window.clearTimeout(timer); timer = 0; };
+        const announce = () => { status.textContent = `Step ${step} of ${count}: ${labels[step] || 'Complete'}`; };
+        const setControlsAvailable = (available) => {
+          controls.hidden = !available;
+          controls.setAttribute('aria-hidden', String(!available));
+          controls.dataset.playbackDisabled = String(!available);
+          controls.querySelectorAll('button').forEach((control) => { control.disabled = !available; });
+        };
+
+        function render(next, userInitiated = false) {
+          step = Math.max(0, Math.min(count, next));
+          root.dataset.stepCurrent = String(step);
+          root.dataset.frame = step === count ? 'end' : step === 0 ? 'start' : 'step';
+          items.forEach((item) => {
+            const itemStep = Number(item.dataset.step);
+            item.classList.toggle('is-visible', itemStep <= step);
+            item.classList.toggle('is-current', itemStep === step);
+          });
+          if (visibleStep) visibleStep.textContent = String(step);
+          const unavailable = controls.dataset.playbackDisabled === 'true';
+          buttons('prev').disabled = unavailable || step === 0;
+          buttons('next').disabled = unavailable || step === count;
+          if (userInitiated) announce();
+        }
+
+        function pause(userInitiated = false) {
+          clearClock();
+          playing = false;
+          root.classList.remove('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'false');
+          buttons('pause').setAttribute('aria-pressed', 'true');
+          if (userInitiated) status.textContent = `Paused at step ${step} of ${count}`;
+        }
+
+        function finish() {
+          pause(false);
+          root.dataset.frame = 'end';
+          status.textContent = `Complete · step ${count} of ${count}`;
+        }
+
+        function tick() {
+          if (!playing) return;
+          if (step >= count) { finish(); return; }
+          render(step + 1, false);
+          if (step >= count) { finish(); return; }
+          timer = window.setTimeout(tick, hold);
+        }
+
+        function play(fromStart = false, userInitiated = false) {
+          clearClock();
+          if (fromStart || step >= count) render(0, userInitiated);
+          playing = true;
+          root.classList.add('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'true');
+          buttons('pause').setAttribute('aria-pressed', 'false');
+          timer = window.setTimeout(tick, hold);
+        }
+
+        controls.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-motion-action]');
+          if (!button) return;
+          const action = button.dataset.motionAction;
+          if (action === 'play') play(false, true);
+          if (action === 'pause') pause(true);
+          if (action === 'replay') play(true, true);
+          if (action === 'prev') { pause(false); render(step - 1, true); }
+          if (action === 'next') { pause(false); render(step + 1, true); }
+        });
+
+        root.addEventListener('keydown', (event) => {
+          if (event.target.matches('input, textarea, select, a[href]')) return;
+          const keys = { ArrowLeft: step - 1, ArrowRight: step + 1, Home: 0, End: count };
+          if (event.code === 'Space' && !event.target.closest('button')) {
+            event.preventDefault();
+            playing ? pause(true) : play(false, true);
+            return;
+          }
+          if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'r') {
+            event.preventDefault();
+            play(true, true);
+            return;
+          }
+          if (!(event.key in keys)) return;
+          event.preventDefault();
+          pause(false);
+          render(keys[event.key], true);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden' && playing) pause(false);
+        });
+        reduce.addEventListener('change', (event) => {
+          if (event.matches && root.dataset.motionState !== 'reduced') {
+            stepBeforeReduce = step;
+            resumeAfterReduce = playing;
+          }
+          pause(false);
+          if (event.matches) {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'reduced';
+            status.textContent = 'Reduced motion · complete static frame · playback controls unavailable';
+          } else if (staticOverride || root.dataset.motionMode === 'none') {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'static';
+            status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+          } else {
+            delete root.dataset.motionState;
+            if (exactStep !== null) {
+              setControlsAvailable(false);
+              render(exactStep, false);
+              root.dataset.frame = 'step';
+              root.dataset.motionState = 'test';
+              status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+            } else {
+              setControlsAvailable(true);
+              render(stepBeforeReduce, false);
+              status.textContent = `Ready · step ${step} of ${count}`;
+              if (resumeAfterReduce && root.dataset.motionMode === 'reveal') {
+                play(false, false);
+              }
+            }
+            resumeAfterReduce = false;
+          }
+        });
+
+        if (staticOverride) {
+          document.documentElement.dataset.motion = 'static';
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = 'static';
+          status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+        } else if (reduce.matches || root.dataset.motionMode === 'none') {
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = reduce.matches ? 'reduced' : 'static';
+          status.textContent = reduce.matches
+            ? 'Reduced motion · complete static frame · playback controls unavailable'
+            : 'Static frame · complete diagram · playback controls unavailable';
+        } else if (exactStep !== null) {
+          document.documentElement.dataset.motion = 'step';
+          pause(false);
+          setControlsAvailable(false);
+          render(exactStep, false);
+          root.dataset.frame = 'step';
+          root.dataset.motionState = 'test';
+          status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+        } else if (root.dataset.motionMode === 'reveal') {
+          setControlsAvailable(true);
+          render(0, false);
+          play(false, false);
+        } else {
+          pause(false);
+          setControlsAvailable(true);
+          render(0, false);
+          status.textContent = `Ready · step 0 of ${count}`;
+        }
+        root.classList.add('motion-ready');
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      const doc = document.documentElement;
+      const updateProgress = () => {
+        const max = doc.scrollHeight - doc.clientHeight;
+        doc.style.setProperty('--read-progress', max > 0 ? doc.scrollTop / max : 0);
+      };
+      addEventListener('scroll', updateProgress, { passive: true });
+      updateProgress();
+
+      const links = [...document.querySelectorAll('nav a')];
+      const sections = links.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+      const navObserver = new IntersectionObserver(entries => {
+        const current = entries.filter(entry => entry.isIntersecting).sort((a,b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!current) return;
+        links.forEach(link => link.classList.toggle('active', link.getAttribute('href') === '#' + current.target.id));
+      }, { rootMargin: '-18% 0px -70% 0px', threshold: [0, .1] });
+      sections.forEach(section => navObserver.observe(section));
+
+      document.querySelectorAll('[data-live-architecture]').forEach((root) => {
+        const nodes = [...root.querySelectorAll('[data-live-node]')];
+        const edges = [...root.querySelectorAll('.arch-edge[data-from][data-to]')];
+        const label = root.querySelector('[data-live-label]');
+        const description = root.querySelector('[data-live-description]');
+        const idleLabel = label.textContent;
+        const idleDescription = description.textContent;
+        let locked = null;
+
+        const show = (id) => {
+          root.classList.toggle('has-focus', Boolean(id));
+          const related = new Set(id ? [id] : []);
+          edges.forEach((edge) => {
+            const hit = Boolean(id) && (edge.dataset.from === id || edge.dataset.to === id);
+            edge.classList.toggle('is-related', hit);
+            if (hit) { related.add(edge.dataset.from); related.add(edge.dataset.to); }
+          });
+          nodes.forEach((node) => node.classList.toggle('is-related', related.has(node.dataset.liveNode)));
+          const node = nodes.find((item) => item.dataset.liveNode === id);
+          label.textContent = node ? node.querySelector('.arch-title').textContent : idleLabel;
+          description.textContent = node ? node.dataset.liveNote : idleDescription;
+        };
+
+        nodes.forEach((node) => {
+          const id = node.dataset.liveNode;
+          node.setAttribute('aria-pressed', 'false');
+          node.addEventListener('pointerenter', () => { if (!locked) show(id); });
+          node.addEventListener('pointerleave', () => { if (!locked) show(null); });
+          node.addEventListener('focus', () => { if (!locked) show(id); });
+          node.addEventListener('blur', () => { if (!locked) show(null); });
+          const toggle = () => {
+            locked = locked === id ? null : id;
+            nodes.forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.liveNode === locked)));
+            show(locked);
+          };
+          node.addEventListener('click', (event) => { event.stopPropagation(); toggle(); });
+          node.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            toggle();
+          });
+        });
+        root.addEventListener('click', () => {
+          locked = null;
+          nodes.forEach((node) => node.setAttribute('aria-pressed', 'false'));
+          show(null);
+        });
+      });
+
+      const sizes = [2,4,8,16];
+      const biases = {2:'Strong isolation; more launch and scheduling overhead',4:'Tradeoff between latency isolation and efficiency',8:'Favor Prefill efficiency',16:'Nearly complete Prefill; weakest isolation'};
+      const slider = document.getElementById('chunk-size');
+      const tokens = [...document.querySelectorAll('#token-strip .token')];
+      function renderChunks(){
+        const size = sizes[Number(slider.value) - 1];
+        const rounds = Math.ceil(tokens.length / size);
+        tokens.forEach((token,index) => {
+          const chunk = Math.floor(index / size);
+          token.classList.toggle('chunk-even', chunk % 2 === 0);
+          token.classList.toggle('chunk-odd', chunk % 2 === 1);
+          token.classList.toggle('boundary', index % size === 0);
+        });
+        document.getElementById('chunk-output').value = `${size} tokens / chunk`;
+        document.getElementById('chunk-rounds').textContent = `${rounds} rounds`;
+        document.getElementById('chunk-boundaries').textContent = `${Math.max(0,rounds - 1)} internal boundaries`;
+        document.getElementById('chunk-bias').textContent = biases[size];
+        document.getElementById('chunk-explanation').textContent = `C=${size}: process at most ${size} new tokens per iteration. The prompt remains one sequence; the Scheduler gains ${Math.max(0,rounds - 1)} internal decision points.`;
+      }
+      slider.addEventListener('input', renderChunks);
+      renderChunks();
+
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      document.querySelectorAll('.pp-details').forEach((details) => {
+        details.addEventListener('toggle', () => {
+          details.classList.remove('is-playing');
+          if (!details.open || reducedMotion.matches) return;
+          requestAnimationFrame(() => requestAnimationFrame(() => details.classList.add('is-playing')));
+        });
+      });
+
+      const operatingSlider = document.getElementById('operating-chunk');
+      if (operatingSlider) {
+        const chunkLabels = ['512', '1K', '2K', '4K', '8K', 'Full'];
+        const summaries = [
+          '512: Strongest Decode isolation and lowest per-iteration memory pressure, but highest iteration and launch overhead; long-request TTFT and throughput may regress.',
+          '1K: Favors ITL and GPU-memory headroom; verify kernel and scheduling overhead at this small chunk size.',
+          '2K: Recovers more Prefill efficiency while generally preserving strong Decode isolation.',
+          '4K: Often a middle ground among latency isolation, Prefill efficiency, and scheduling overhead.',
+          '8K: Favors long-prompt TTFT and Prefill efficiency, but Decode tail latency and per-iteration peaks approach full Prefill.',
+          'Full: Equivalent to no chunking—the simplest per-request Prefill path, but the weakest ITL isolation and highest per-iteration peak.'
+        ];
+        const metrics = {
+          ttft: { baseline: 28, values: [92, 80, 66, 53, 40, 28], lowerIsBetter: true },
+          itl: { baseline: 100, values: [18, 27, 40, 55, 74, 100], lowerIsBetter: true },
+          throughput: { baseline: 76, values: [58, 76, 92, 100, 92, 76], lowerIsBetter: false },
+          memory: { baseline: 100, values: [14, 22, 36, 54, 72, 100], lowerIsBetter: true }
+        };
+        const level = (value) => value <= 35 ? 'Low' : value <= 80 ? 'Medium' : 'High';
+        const renderOperatingPoint = () => {
+          const index = Number(operatingSlider.value);
+          document.getElementById('operating-output').value = chunkLabels[index] === 'Full' ? 'Full Prefill' : `${chunkLabels[index]} tokens`;
+          document.getElementById('operating-summary').textContent = summaries[index];
+          Object.entries(metrics).forEach(([name, metric]) => {
+            const value = metric.values[index];
+            document.querySelector(`[data-op-fill="${name}"]`).style.setProperty('--value', `${value}%`);
+            document.querySelector(`[data-op-value="${name}"]`).value = level(value);
+            const effect = document.querySelector(`[data-op-effect="${name}"]`);
+            const delta = value - metric.baseline;
+            const same = Math.abs(delta) < 3;
+            const better = metric.lowerIsBetter ? delta < 0 : delta > 0;
+            effect.value = same ? '≈ Disabled' : better ? 'May improve' : 'May regress';
+            effect.className = `op-effect ${same ? 'same' : better ? 'better' : 'worse'}`;
+          });
+        };
+        operatingSlider.addEventListener('input', renderOperatingPoint);
+        renderOperatingPoint();
+      }
+    })();
+  </script>
+</body>
+</html>

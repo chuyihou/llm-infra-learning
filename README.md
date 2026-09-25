@@ -16,7 +16,7 @@
 
 | 期号 | 主题 | 状态 |
 |------|------|------|
-| deep-dives/01 | Chunked Prefill：把长 Prompt 变成可调度的工作 | ✅ 已发布 |
+| deep-dives/01 | Chunked Prefill：把长 Prompt 变成可调度的工作（[中文](deep-dives/01-chunked-prefill/index.html) / [English](deep-dives/01-chunked-prefill/index-en.html)） | ✅ 已发布 |
 | notes/2026-09-19 | LLM RL 框架：slime、verl、Relax、Miles、OpenRLHF | 学习中 |
 
 选题顺序见 [ROADMAP.md](ROADMAP.md)（只排 deep dive，notes 不排期）。
